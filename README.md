@@ -9,6 +9,7 @@ magical, simple private currency in rust
 * A validator set consisting of equally weighted nodes without staking and slashing can work just fine
 * Inflation isn't needed
 * Code AND supply need to be auditable
+* Penumbra is a DEX, and stores some things in the clear.  Aura is a currency, and stores nothing in the clear.
 
 
 
