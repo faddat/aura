@@ -10,6 +10,7 @@ magical, simple private currency in rust
 
 ## Approximate Layout
 
+```
 aura_project/
 ├── Cargo.toml (workspace definition)
 ├── aura
@@ -32,3 +33,4 @@ aura_project/
 │   └── src/            (Wallet key management, transaction construction (ZKP gen),
 │                        blockchain scanning client logic, sled for local wallet DB)
 └── malachite-core/ (As a dependency)
+```
