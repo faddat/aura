@@ -1,6 +1,15 @@
 # aura
 magical, simple private currency in rust
 
+## Thesis
+
+* Monero is actually broken
+* Zcash has a vastly too tiny anonymity set
+* IBC actually matters
+* A validator set consisting of equally weighted nodes without staking and slashing can work just fine
+* Inflation isn't needed
+* Code AND supply need to be auditable
+
 
 
 
