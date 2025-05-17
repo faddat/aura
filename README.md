@@ -20,7 +20,6 @@ magical, simple private currency in rust
 ## Approximate Layout
 
 ```
-aura_project/
 ├── Cargo.toml (workspace definition)
 ├── aura
 │   ├── Cargo.toml

@@ -1,0 +1,9 @@
+[workspace]
+members = ["aura", "aura-cli", "aura-core", "aura-node-lib", "aura-wallet-lib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
