@@ -3,7 +3,7 @@ magical, simple private currency in rust
 
 ## Thesis
 
-* Monero is actually broken, and it got broken because bulletproofs aren't ZK proofs
+* Monero is [actually broken](https://duke.hush.is/memos/6/), and it got broken because bulletproofs aren't ZK proofs
 * Zcash has a vastly too tiny anonymity set
 * IBC actually matters
 * A validator set consisting of equally weighted nodes without staking and slashing can work just fine
