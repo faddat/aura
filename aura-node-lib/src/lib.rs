@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use aura_core::CoreError;
-use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
+pub use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 
 // Re-export Malachite types for use in our crate
 pub use malachitebft_app;
@@ -18,7 +18,6 @@ mod state;
 
 pub use application::AuraApplication;
 pub use config::AuraNodeConfig;
-pub use node::AuraNode;
 pub use state::AuraState;
 
 /// Represents the state of the Aura node

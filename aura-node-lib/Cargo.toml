@@ -14,7 +14,8 @@ malachitebft-engine = { git = "https://github.com/informalsystems/malachite", re
 malachitebft-config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
 malachitebft-core-consensus = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-consensus" }
 malachitebft-peer = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-peer" }
-libp2p-identity = "0.2.11    "
+libp2p-identity = "0.2.11"
+sha256 = "1.6.0"
 
 # State Storage
 redb = "2.1.0" # Or latest stable version
@@ -33,6 +34,7 @@ thiserror = "2.0.12"                               # Matching aura-core
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10.9"
 
 # RPC (Example: jsonrpsee, choose one)
 # jsonrpsee = { version = "0.22", features = ["full"] , optional = true }

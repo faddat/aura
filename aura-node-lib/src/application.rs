@@ -68,7 +68,7 @@ impl AppService for AuraApplication {
     async fn propose_block(&self, height: u64, round: u64) -> Result<Block> {
         info!("Proposing block at height {} round {}", height, round);
 
-        let state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
+        let mut state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
 
         // Create a new block with transactions from the mempool
         let new_block = state.create_block_proposal(height, round, self.node_id.clone())?;
