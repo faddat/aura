@@ -1,4 +1,5 @@
 # aura
+
 magical, simple private currency in rust
 
 ## Thesis
@@ -11,8 +12,6 @@ magical, simple private currency in rust
 * Code AND supply need to be auditable
 * Penumbra is a DEX, and stores some things in the clear.  Aura is a currency, and stores nothing in the clear.
 
-
-
 ## Status
 
 For the love of god don't use this right now.  It is:
@@ -24,16 +23,9 @@ For the love of god don't use this right now.  It is:
 
 But if you want to contribute, I'd love it!
 
-
-
-
-
-
-
-
 ## Approximate Layout
 
-```
+```toml
 ├── Cargo.toml (workspace definition)
 ├── aura
 │   ├── Cargo.toml
