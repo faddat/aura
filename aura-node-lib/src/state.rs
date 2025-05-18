@@ -1,7 +1,6 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
-use aura_core::Transaction; // Just import what we're using
- // For timestamp handling
+use aura_core::Transaction;
 use redb::{Database, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,60 +8,44 @@ use tracing::{debug, error, info, warn};
 
 use crate::{Error, Result as AuraResult};
 
-/// Simple validator update structure to match what would be returned from EndBlock
+// Derive Ord and PartialOrd for Block and ValidatorUpdate
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ValidatorUpdate {
-    pub pub_key: Vec<u8>, // Public key of the validator
-    pub power: i64,       // Voting power
+    pub pub_key: Vec<u8>,
+    pub power: i64,
 }
 
-// Simple Block structure for node-lib internal use.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Block {
     pub height: u64,
-    pub proposer_address: String, // From Malachite's BeginBlock (typically hex-encoded public key hash)
-    pub timestamp: i64,           // Unix timestamp (seconds) from chrono
+    pub proposer_address: String,
+    pub timestamp: i64,
     pub transactions: Vec<Transaction>,
-    // app_hash is the hash of the state *after* this block is applied,
-    // usually stored with the *next* block's header or in metadata.
-    // For simplicity, we calculate it and it's returned by commit, not stored in this struct directly.
 }
 
-/// Table definitions for the state database
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
-// Storing height as LE bytes, and app_hash as raw bytes.
-// Keys: "current_height", "current_app_hash"
-
 const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks");
 const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions");
-// TODO: Add tables for nullifiers and note commitments
 
-/// Represents the execution result of a transaction.
 #[derive(Debug, Clone, Default)]
 pub struct ExecTxResult {
     pub code: u32,
     pub log: String,
 }
 
-/// Represents the application state for the Aura blockchain
 #[derive(Debug)]
 pub struct AuraState {
     db: Database,
-    pub current_height: u64, // Made public for app_message_loop direct access (temporary)
+    pub current_height: u64,
     current_app_hash: Vec<u8>,
-
-    // Staging area for the current block being processed
-    pub pending_block_height: u64, // Made public for app_message_loop direct access (temporary)
-    pending_block_proposer_address: String, // From BeginBlock
-    pending_block_timestamp: i64,           // From BeginBlock, unix timestamp
+    pub pending_block_height: u64,
+    pending_block_proposer_address: String,
+    pending_block_timestamp: i64,
     pending_transactions: Vec<Transaction>,
-    // TODO: Stage nullifiers and commitments for the current block
-    // pending_spent_nullifiers: Vec<Nullifier>,
-    // pending_new_commitments: Vec<NoteCommitment>,
     #[allow(dead_code)]
     node_private_key: Arc<aura_core::PrivateKey>,
-
-    pub current_round: malachitebft_app_channel::app::types::Round, // Added to store current round from StartedRound
+    // Corrected: Use the fully qualified path for Round if it's not in prelude for this module
+    pub current_round: malachitebft_app_channel::app::types::Round,
     mempool: VecDeque<Transaction>,
 }
 
@@ -78,7 +61,7 @@ impl AuraState {
         info!(
             "AuraState initialized. Current height: {}, App hash: {}",
             current_height,
-            hex::encode(¤t_app_hash)
+            hex::encode(current_app_hash) // Corrected typo: current_app_hash
         );
         Ok(Self {
             db,
@@ -86,10 +69,10 @@ impl AuraState {
             current_app_hash,
             pending_block_height: 0,
             pending_block_proposer_address: String::new(),
-            pending_block_timestamp: chrono::Utc::now().timestamp(), // Default, current time
+            pending_block_timestamp: chrono::Utc::now().timestamp(),
             pending_transactions: Vec::new(),
             node_private_key,
-            current_round: malachitebft_app_channel::app::types::Round::new(0), // Initialize round
+            current_round: malachitebft_app_channel::app::types::Round::new(0),
             mempool: VecDeque::new(),
         })
     }
@@ -125,7 +108,6 @@ impl AuraState {
                 hasher.finalize().to_vec()
             });
 
-        // Ensure consistency: if height is 0, app_hash must be the defined genesis hash.
         let final_app_hash = if height == 0 {
             let mut hasher = Sha256::new();
             hasher.update(GENESIS_APP_HASH_PLACEHOLDER);
@@ -154,8 +136,8 @@ impl AuraState {
     pub fn begin_block(
         &mut self,
         height: u64,
-        proposer_address: Vec<u8>, // Typically from Malachite's block.header.proposer_address
-        timestamp: i64,            // Unix timestamp in seconds
+        proposer_address: Vec<u8>,
+        timestamp: i64,
     ) -> AuraResult<()> {
         debug!(
             "State: BeginBlock for height {}, proposer: {}, timestamp: {}",
@@ -163,20 +145,33 @@ impl AuraState {
             hex::encode(&proposer_address),
             timestamp
         );
-        if height != self.current_height + 1 {
-            let err_msg = format!(
-                "BeginBlock: Proposed height {} is not sequential. Current height: {}",
-                height, self.current_height
+        // It's okay for pending_block_height to be 0 if this is the first block after init.
+        // The check should be against current_height.
+        if self.pending_block_height != 0 && height != self.current_height + 1 {
+            warn!(
+                "BeginBlock: Overwriting a pending block (pending: {}, new: {}, current_committed: {}). This might happen if a previous commit failed or was interrupted.",
+                self.pending_block_height, height, self.current_height
             );
-            error!("{}", err_msg);
-            return Err(Error::State(err_msg));
         }
+        if self.pending_block_height == 0
+            && height != self.current_height + 1
+            && self.current_height != 0
+        {
+            // If it's not the very first block (height 1 from current 0)
+            if height != self.current_height + 1 {
+                let err_msg = format!(
+                    "BeginBlock: Proposed height {} is not sequential after current committed height {}. (Pending block was 0)",
+                    height, self.current_height
+                );
+                error!("{}", err_msg);
+                return Err(Error::State(err_msg));
+            }
+        }
+
         self.pending_block_height = height;
-        self.pending_block_proposer_address = hex::encode(proposer_address); // Store as hex string
+        self.pending_block_proposer_address = hex::encode(proposer_address);
         self.pending_block_timestamp = timestamp;
         self.pending_transactions.clear();
-        // self.pending_spent_nullifiers.clear();
-        // self.pending_new_commitments.clear();
         Ok(())
     }
 
@@ -221,7 +216,6 @@ impl AuraState {
                 self.pending_block_height, height
             )));
         }
-        // For now, we don't have validator updates
         Ok(vec![])
     }
 
@@ -231,12 +225,24 @@ impl AuraState {
                 "Commit called without a pending block.".to_string(),
             ));
         }
+        if self.pending_block_height != self.current_height + 1
+            && !(self.current_height == 0 && self.pending_block_height == 1)
+        {
+            // This check might be too strict if recovering or restarting a height, but good for normal flow.
+            error!(
+                "State: Commit_block height mismatch! Pending: {}, Current Committed: {}. Aborting commit.",
+                self.pending_block_height, self.current_height
+            );
+            return Err(Error::State(format!(
+                "Commit_block height mismatch. Pending: {}, Current Committed: {}.",
+                self.pending_block_height, self.current_height
+            )));
+        }
         info!(
             "State: Committing block for height {}",
             self.pending_block_height
         );
 
-        // Create block to store
         let block_to_store = Block {
             height: self.pending_block_height,
             proposer_address: self.pending_block_proposer_address.clone(),
@@ -244,24 +250,19 @@ impl AuraState {
             transactions: self.pending_transactions.clone(),
         };
 
-        // Calculate new app hash before DB transaction
         let new_app_hash = {
             let mut hasher = Sha256::new();
             hasher.update(block_to_store.height.to_le_bytes());
             for tx in &block_to_store.transactions {
                 hasher.update(tx.id()?);
             }
-            // Add proposer and timestamp to app_hash for more robustness
             hasher.update(block_to_store.proposer_address.as_bytes());
             hasher.update(block_to_store.timestamp.to_le_bytes());
-            // TODO: Include Merkle roots of nullifiers/commitments
             hasher.finalize().to_vec()
         };
 
-        // Save to database
         self.save_block_to_db(&block_to_store, &new_app_hash)?;
 
-        // Update in-memory state
         self.current_height = block_to_store.height;
         self.current_app_hash = new_app_hash.clone();
 
@@ -272,31 +273,22 @@ impl AuraState {
             hex::encode(&self.current_app_hash)
         );
 
-        // Reset pending state
         self.pending_block_height = 0;
         self.pending_transactions.clear();
-        // self.pending_spent_nullifiers.clear();
-        // self.pending_new_commitments.clear();
 
         Ok(new_app_hash)
     }
 
-    // Save block data to the database in a separate function to avoid borrow issues
     fn save_block_to_db(&self, block: &Block, app_hash: &[u8]) -> AuraResult<()> {
         let write_txn = self.db.begin_write()?;
         Self::persist_block_and_txs(&write_txn, block)?;
 
-        // Save metadata
         let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
         metadata_table.insert("current_height", &block.height.to_le_bytes().as_slice())?;
         metadata_table.insert("current_app_hash", app_hash)?;
 
-        // Drop all tables before committing
         drop(metadata_table);
-
-        // Now it's safe to commit
         write_txn.commit()?;
-
         Ok(())
     }
 
