@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::Result;
 use crate::application::{AppService, AuraApplication};
