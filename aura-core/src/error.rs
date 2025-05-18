@@ -39,7 +39,7 @@ pub enum CoreError {
     #[error("Hex decoding error: {0}")]
     Hex(#[from] hex::FromHexError),
     #[error("Bech32 error: {0}")]
-    Bech32(String), // Catch-all for various bech32 sub-errors
+    Bech32(String),
     #[error("BIP39 error: {0}")]
     Bip39(#[from] bip39::Error), // bip39 v2.x Error implements std::error::Error
     #[error("Configuration error: {0}")]
@@ -48,25 +48,21 @@ pub enum CoreError {
     Other(String),
 }
 
-// Specific bech32 error conversions
-impl From<bech32::DecodeError> for CoreError {
-    fn from(e: bech32::DecodeError) -> Self {
-        CoreError::Bech32(format!("Bech32 decode error: {}", e))
+// Specific bech32 error conversions for v0.11
+impl From<bech32::Error> for CoreError {
+    // General bech32::Error
+    fn from(e: bech32::Error) -> Self {
+        CoreError::Bech32(format!("Bech32 generic error: {}", e))
     }
 }
-impl From<bech32::EncodeError> for CoreError {
-    fn from(e: bech32::EncodeError) -> Self {
-        CoreError::Bech32(format!("Bech32 encode error: {}", e))
-    }
-}
+// The previous From impls for sub-module errors might still be useful if you match on them,
+// but bech32::Error itself should cover decode/encode/hrp errors.
 impl From<bech32::primitives::hrp::Error> for CoreError {
-    // Hrp::parse can fail
     fn from(e: bech32::primitives::hrp::Error) -> Self {
         CoreError::Bech32(format!("Bech32 HRP error: {}", e))
     }
 }
 impl From<bech32::primitives::gf32::Error> for CoreError {
-    // Fe32::try_from can fail
     fn from(e: bech32::primitives::gf32::Error) -> Self {
         CoreError::Bech32(format!("Bech32 GF32/Fe32 error: {}", e))
     }

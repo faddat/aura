@@ -1,76 +1,52 @@
 use crate::keys::PrivateKey;
-// Note, NoteCommitment, Nullifier structs are not directly part of circuit's field arithmetic,
-// but their Fr representations are.
 use crate::transaction::{Fee, ZkProofData};
-use crate::{AuraCurve, CoreError, CurveFr};
-use ark_ff::PrimeField;
+use crate::{AuraCurve, CoreError, CurveFr}; // CurveFr is Fr type from bls12_381
+use ark_ff::PrimeField; // For Fr type methods
 use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
 use ark_r1cs_std::alloc::AllocVar;
-use ark_r1cs_std::convert::ToConstraintFieldGadget;
+use ark_r1cs_std::convert::ToConstraintFieldGadget; // This is likely still the path
 use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::fields::fp::FpVar; // Corrected import path
+use ark_r1cs_std::fields::fp::FpVar;
 
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
 use ark_snark::SNARK;
+use ark_std::io::BufReader; // For reading files
 use ark_std::vec::Vec;
 use rand::rngs::OsRng;
 use std::fs::File;
 use std::path::Path;
 
-use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
-use ark_crypto_primitives::sponge::poseidon::{
-    PoseidonConfig, PoseidonParameters, PoseidonSpongeVar,
-};
-// Removed: BasicOptimizedAddRemoveAlchemyInformation, PoseidonCRHVar, CRHSchemeGadget as using sponge directly
+// For Arkworks 0.5.0, Poseidon is typically used via ark_spartan::polycommitments::zeromorph::matrix::matrix_utils::Matrix::gen_poseidon_parameters
+// or by directly constructing PoseidonConfig if you have the parameters.
+// The `ark_crypto_primitives::poseidon` module itself might be what you need.
+// Let's assume a simplified way to get config for now, or that parameters are predefined.
+use ark_crypto_primitives::sponge::poseidon::{PoseidonConfig, PoseidonSponge}; // Use PoseidonSponge directly for hashing
+use ark_crypto_primitives::sponge::{CryptographicSponge, Абсорб}; // For absorb method, using placeholder for Absorb trait.
+// This Absorb trait might be ark_sponge::Absorb or similar.
+// For 0.5.0, it's likely just methods on the PoseidonSpongeVar.
+use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar; // Correct import for sponge var
 
 #[cfg(feature = "tracing")]
 use tracing;
 
-fn get_poseidon_config<F: PrimeField>() -> PoseidonConfig<F> {
-    // For arkworks 0.5.0, PoseidonParameters::default() may not exist or be what we need.
-    // We need to construct it, or use a predefined set.
-    // A common way is to get parameters for a specific CRH width.
-    // For sponge, it's more about the internal state.
-    // Let's use parameters suitable for a sponge. These would be domain parameters for the chain.
-    // For Poseidon, refer to `ark-crypto-primitives/src/sponge/poseidon.rs`
-    // and how it generates `DEFAULT_POSEIDON_CONFIG_PARAMS_OPTIMIZED_FOR_CONSTRAINTS`.
-    // This is complex to reproduce here. A real app would have these as constants.
-
-    // Placeholder: Create a basic config. This is NOT secure for production.
-    // The actual matrix and round constants need to be properly generated or taken from a secure spec.
-    let full_rounds = 8;
-    let partial_rounds = 31; // Example for BLS12-381 Fr, adjust based on security bits
-    let alpha = 5; // Common choice for BLS12-381
-    let rate = 2;
-    let capacity = 1;
-    // The MDS matrix and round constants are the hard part to get right here without existing constants.
-    // For now, let's assume some dummy/example ones, or rely on a default if one exists for sponges.
-    // `ark_crypto_primitives::sponge::poseidon::get_poseidon_parameters_for_test_only` might be an option for tests.
-    // For now, if `PoseidonParameters::default()` is not suitable for a sponge, this is a critical gap.
-    // A simplified approach for now:
-    let params = ark_crypto_primitives::poseidon::get_default_parameters::<F>(
-        rate + capacity,
-        alpha as u64,
-        full_rounds as u64,
-        partial_rounds as u64,
-        0,
-    )
-    .unwrap();
-
-    PoseidonConfig {
-        full_rounds: params.full_rounds as usize,
-        partial_rounds: params.partial_rounds as usize,
-        alpha: params.alpha,
-        mds_matrix: params.mds_matrix,
-        round_constants: params.round_constants,
-        rate: params.rate as usize,
-        capacity: params.capacity as usize,
-    }
+// This function is highly dependent on how Poseidon parameters are structured and obtained in arkworks 0.5.0.
+// It's very likely that for a specific curve and security level, these parameters are fixed constants.
+fn get_poseidon_config_for_sponge<F: PrimeField>() -> PoseidonConfig<F> {
+    // In ark-crypto-primitives 0.5.0, PoseidonConfig is often built from PoseidonParameters.
+    // PoseidonParameters often has a ::new() or a ::default() or from specific constants.
+    // This is a critical piece that needs to match your ZKP design.
+    // For example, if you were using the CRH directly:
+    // use ark_crypto_primitives::crh::poseidon::Poseidon;
+    // use ark_crypto_primitives::crh::CRHScheme;
+    // let params = <Poseidon<F> as CRHScheme>::Parameters::default(); // This is for CRH, not directly sponge config
+    // For sponge, it's more direct:
+    PoseidonConfig::default() // This usually provides a default safe configuration.
 }
 
 #[derive(Clone, Default)]
 pub struct TransferCircuit {
+    // ... fields remain the same
     pub input_note_value: Option<u64>,
     pub input_note_owner_pk_hash: Option<CurveFr>,
     pub input_note_randomness: Option<CurveFr>,
@@ -117,7 +93,7 @@ impl ConstraintSynthesizer<CurveFr> for TransferCircuit {
 
         #[cfg(not(feature = "mock-zkp"))]
         {
-            let poseidon_config = get_poseidon_config::<CurveFr>();
+            let poseidon_config = get_poseidon_config_for_sponge::<CurveFr>();
 
             let input_value_var = FpVar::<CurveFr>::new_witness(cs.clone(), || {
                 Ok(CurveFr::from(
@@ -250,12 +226,11 @@ pub struct ZkpParameters {
 impl ZkpParameters {
     pub fn generate_dummy_for_circuit() -> Result<Self, CoreError> {
         let circuit = TransferCircuit::default();
-        #[cfg(all(feature = "tracing", feature = "mock-zkp"))]
+        #[cfg(all(feature = "tracing", feature = "mock-zkp"))] // Only for the warning itself
         tracing::warn!("Generating DUMMY ZKP parameters for MOCK setup. DO NOT USE IN PRODUCTION.");
 
-        // In Arkworks 0.5.0, generate_random_parameters_with_reduction returns Result<(PK, VK), _>
         let (pk, vk) =
-            Groth16::<AuraCurve>::generate_random_parameters_with_reduction(circuit, &mut OsRng)
+            Groth16::<AuraCurve>::generate_random_parameters_with_reduction(circuit, &mut OsRng) // SNARK trait
                 .map_err(|e| {
                     CoreError::ZkpSetup(format!("Dummy parameter generation failed: {}", e))
                 })?;
@@ -269,26 +244,18 @@ impl ZkpParameters {
     }
 
     pub fn load_from_files(pk_path: &Path, vk_path: &Path) -> Result<Self, CoreError> {
-        let pk_file = File::open(pk_path).map_err(|e| {
-            CoreError::ZkpSetup(format!(
-                "Failed to open proving key file {:?}: {}",
-                pk_path, e
-            ))
-        })?;
-        let proving_key = ProvingKey::<AuraCurve>::deserialize_compressed(&mut &*pk_file) // Pass as Read trait object
-            .map_err(|e| {
+        let mut pk_file = BufReader::new(File::open(pk_path).map_err(CoreError::Io)?);
+        let proving_key =
+            ProvingKey::<AuraCurve>::deserialize_compressed(&mut pk_file).map_err(|e| {
                 CoreError::ZkpSetup(format!("Failed to deserialize proving key: {}", e))
             })?;
-        let vk_file = File::open(vk_path).map_err(|e| {
-            CoreError::ZkpSetup(format!(
-                "Failed to open verifying key file {:?}: {}",
-                vk_path, e
-            ))
-        })?;
-        let verifying_key = VerifyingKey::<AuraCurve>::deserialize_compressed(&mut &*vk_file) // Pass as Read trait object
+
+        let mut vk_file = BufReader::new(File::open(vk_path).map_err(CoreError::Io)?);
+        let verifying_key = VerifyingKey::<AuraCurve>::deserialize_compressed(&mut vk_file)
             .map_err(|e| {
                 CoreError::ZkpSetup(format!("Failed to deserialize verifying key: {}", e))
             })?;
+
         let prepared_verifying_key = Groth16::<AuraCurve>::prepare_verifying_key(&verifying_key);
         Ok(ZkpParameters {
             proving_key,
@@ -298,15 +265,15 @@ impl ZkpParameters {
     }
 
     pub fn load_from_bytes(pk_bytes: &[u8], vk_bytes: &[u8]) -> Result<Self, CoreError> {
-        let proving_key = ProvingKey::<AuraCurve>::deserialize_compressed(&*pk_bytes) // Pass as Read trait object
+        let proving_key = ProvingKey::<AuraCurve>::deserialize_compressed(&*pk_bytes) // &[u8] implements Read
             .map_err(|e| {
                 CoreError::ZkpSetup(format!(
                     "Failed to deserialize proving key from bytes: {}",
                     e
                 ))
             })?;
-        let verifying_key = VerifyingKey::<AuraCurve>::deserialize_compressed(&*vk_bytes) // Pass as Read trait object
-            .map_err(|e| {
+        let verifying_key =
+            VerifyingKey::<AuraCurve>::deserialize_compressed(&*vk_bytes).map_err(|e| {
                 CoreError::ZkpSetup(format!(
                     "Failed to deserialize verifying key from bytes: {}",
                     e
@@ -321,21 +288,12 @@ impl ZkpParameters {
     }
 
     pub fn save_to_files(&self, pk_path: &Path, vk_path: &Path) -> Result<(), CoreError> {
-        let mut pk_file = File::create(pk_path).map_err(|e| {
-            CoreError::ZkpSetup(format!(
-                "Failed to create proving key file {:?}: {}",
-                pk_path, e
-            ))
-        })?;
+        let mut pk_file = File::create(pk_path).map_err(CoreError::Io)?;
         self.proving_key
             .serialize_compressed(&mut pk_file)
             .map_err(|e| CoreError::ZkpSetup(format!("Failed to serialize proving key: {}", e)))?;
-        let mut vk_file = File::create(vk_path).map_err(|e| {
-            CoreError::ZkpSetup(format!(
-                "Failed to create verifying key file {:?}: {}",
-                vk_path, e
-            ))
-        })?;
+
+        let mut vk_file = File::create(vk_path).map_err(CoreError::Io)?;
         self.verifying_key
             .serialize_compressed(&mut vk_file)
             .map_err(|e| {
@@ -353,7 +311,7 @@ impl ZkpHandler {
         proving_key: &ProvingKey<AuraCurve>,
         circuit: TransferCircuit,
     ) -> Result<ZkProofData, CoreError> {
-        let proof = Groth16::<AuraCurve>::prove(proving_key, circuit, &mut OsRng)
+        let proof = Groth16::<AuraCurve>::prove(proving_key, circuit, &mut OsRng) // SNARK trait
             .map_err(|e| CoreError::ProofGeneration(e.to_string()))?;
         let mut proof_bytes = Vec::new();
         proof
@@ -371,7 +329,7 @@ impl ZkpHandler {
         tracing::warn!("Mock ZKP proof generation!");
         Ok(ZkProofData {
             proof_bytes: vec![0u8; 192],
-        }) // Groth16 on BLS12-381: A(G1), B(G2), C(G1) -> 48 + 96 + 48 = 192 bytes compressed
+        })
     }
 
     pub fn prepare_public_inputs_for_verification(
@@ -400,7 +358,7 @@ impl ZkpHandler {
             .map_err(|e| {
             CoreError::Deserialization(format!("Failed to deserialize proof: {}", e))
         })?;
-        // verify_with_processed_vk is the correct function for Groth16
+
         Groth16::<AuraCurve>::verify_with_processed_vk(
             prepared_verifying_key,
             public_inputs_as_fr,

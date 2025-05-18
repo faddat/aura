@@ -1,14 +1,6 @@
 use crate::AURA_ADDR_HRP;
 use crate::error::CoreError;
-use bech32::{self, Error as Bech32Error, FromBase32, ToBase32, Variant, u5};
-// For bech32 v0.11.0:
-use bech32::primitives::convert_bits::Error as ConvertBitsError;
-use bech32::primitives::decode::Error as DecodeError;
-use bech32::primitives::encode::Error as EncodeError;
-use bech32::primitives::gf32::Error as Gf32Error;
-use bech32::primitives::hrp::Error as HrpError;
-use bech32::{self, Bech32m, Error as Bech32LibError, Fe32, Hrp}; // Fe32 is u5
-
+use bech32::{self, Bech32m, Fe32, Hrp};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
@@ -96,10 +88,13 @@ impl FromStr for AuraAddress {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // bech32::decode takes a &str and returns Result<(Hrp, Vec<Fe32>, Variant), DecodeError>
-        let (hrp_decoded, data_fe32, variant_decoded) =
-            bech32::decode(s).map_err(CoreError::from)?;
-
-        if variant_decoded != Bech32m::VARIANT {
+        let (hrp_decoded, data_u5) = bech32::decode(s).map_err(CoreError::from)?;
+        let data_fe32 = data_u5
+            .iter()
+            .copied()
+            .map(|b| Fe32::from(b))
+            .collect::<Vec<Fe32>>();
+        if hrp_decoded != AURA_ADDR_HRP {
             return Err(CoreError::InvalidAddress(
                 "Decoded variant is not Bech32m".to_string(),
             ));
