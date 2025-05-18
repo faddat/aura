@@ -318,7 +318,7 @@ impl ZkpParameters {
             ))
         })?;
         let proving_key =
-            ProvingKey::<AuraCurve>::deserialize_compressed(pk_file).map_err(|e| {
+            ProvingKey::<AuraCurve>::deserialize_uncompressed(pk_file).map_err(|e| {
                 CoreError::ZkpSetup(format!("Failed to deserialize proving key: {}", e))
             })?;
 
@@ -329,7 +329,7 @@ impl ZkpParameters {
             ))
         })?;
         let verifying_key =
-            VerifyingKey::<AuraCurve>::deserialize_compressed(vk_file).map_err(|e| {
+            VerifyingKey::<AuraCurve>::deserialize_uncompressed(vk_file).map_err(|e| {
                 CoreError::ZkpSetup(format!("Failed to deserialize verifying key: {}", e))
             })?;
 
@@ -344,14 +344,14 @@ impl ZkpParameters {
 
     pub fn load_from_bytes(pk_bytes: &[u8], vk_bytes: &[u8]) -> Result<Self, CoreError> {
         let proving_key =
-            ProvingKey::<AuraCurve>::deserialize_compressed(pk_bytes).map_err(|e| {
+            ProvingKey::<AuraCurve>::deserialize_uncompressed(pk_bytes).map_err(|e| {
                 CoreError::ZkpSetup(format!(
                     "Failed to deserialize proving key from bytes: {}",
                     e
                 ))
             })?;
         let verifying_key =
-            VerifyingKey::<AuraCurve>::deserialize_compressed(vk_bytes).map_err(|e| {
+            VerifyingKey::<AuraCurve>::deserialize_uncompressed(vk_bytes).map_err(|e| {
                 CoreError::ZkpSetup(format!(
                     "Failed to deserialize verifying key from bytes: {}",
                     e
@@ -445,10 +445,10 @@ impl ZkpHandler {
         public_inputs_as_fr: &[CurveFr],
         proof_data: &ZkProofData,
     ) -> Result<bool, CoreError> {
-        let proof = Proof::<AuraCurve>::deserialize_compressed(proof_data.proof_bytes.as_slice())
+        let proof = Proof::<AuraCurve>::deserialize_uncompressed(proof_data.proof_bytes.as_slice())
             .map_err(|e| {
-            CoreError::Deserialization(format!("Failed to deserialize proof: {}", e))
-        })?;
+                CoreError::Deserialization(format!("Failed to deserialize proof: {}", e))
+            })?;
 
         Groth16::<AuraCurve>::verify_proof_with_prepared_inputs(
             prepared_verifying_key,
