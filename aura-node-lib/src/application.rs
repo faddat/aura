@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 use crate::{
     Error, Result,
@@ -44,7 +44,7 @@ impl AppService for AuraApplication {
     async fn propose_block(&self, height: u64, round: u64) -> Result<Block> {
         info!("Proposing block at height {} round {}", height, round);
 
-        let mut state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
+        let state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
 
         // Create a new block with transactions from the mempool
         let block = Block {

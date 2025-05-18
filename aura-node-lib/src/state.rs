@@ -1,10 +1,10 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
-use aura_core::{NoteCommitment, Nullifier, Transaction};
+use aura_core::Transaction;
 use redb::{Database, TableDefinition, WriteTransaction}; // Added WriteTransaction
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{Error, Result as AuraResult}; // Crate-local Result and Error
 
