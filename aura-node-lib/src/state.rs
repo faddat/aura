@@ -10,14 +10,14 @@ use tracing::{debug, error, info, warn};
 use crate::{Error, Result as AuraResult};
 
 /// Simple validator update structure to match what would be returned from EndBlock
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ValidatorUpdate {
     pub pub_key: Vec<u8>, // Public key of the validator
     pub power: i64,       // Voting power
 }
 
 // Simple Block structure for node-lib internal use.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Block {
     pub height: u64,
     pub proposer_address: String, // From Malachite's BeginBlock (typically hex-encoded public key hash)
@@ -48,11 +48,11 @@ pub struct ExecTxResult {
 #[derive(Debug)]
 pub struct AuraState {
     db: Database,
-    current_height: u64,
+    pub current_height: u64, // Made public for app_message_loop direct access (temporary)
     current_app_hash: Vec<u8>,
 
     // Staging area for the current block being processed
-    pending_block_height: u64,
+    pub pending_block_height: u64, // Made public for app_message_loop direct access (temporary)
     pending_block_proposer_address: String, // From BeginBlock
     pending_block_timestamp: i64,           // From BeginBlock, unix timestamp
     pending_transactions: Vec<Transaction>,
@@ -62,6 +62,7 @@ pub struct AuraState {
     #[allow(dead_code)]
     node_private_key: Arc<aura_core::PrivateKey>,
 
+    pub current_round: malachitebft_app_channel::app::types::Round, // Added to store current round from StartedRound
     mempool: VecDeque<Transaction>,
 }
 
@@ -77,7 +78,7 @@ impl AuraState {
         info!(
             "AuraState initialized. Current height: {}, App hash: {}",
             current_height,
-            hex::encode(&current_app_hash)
+            hex::encode(¤t_app_hash)
         );
         Ok(Self {
             db,
@@ -88,6 +89,7 @@ impl AuraState {
             pending_block_timestamp: chrono::Utc::now().timestamp(), // Default, current time
             pending_transactions: Vec::new(),
             node_private_key,
+            current_round: malachitebft_app_channel::app::types::Round::new(0), // Initialize round
             mempool: VecDeque::new(),
         })
     }

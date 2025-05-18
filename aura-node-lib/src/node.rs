@@ -1,38 +1,38 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::mpsc; // For channels if we need to create them for app internal comms
-use tokio::task::JoinHandle;
+use std::sync::{Arc, Mutex}; // Corrected Mutex import
 
 use async_trait::async_trait;
-use tracing::{Instrument, debug, error, info, warn}; // Added Instrument
+use eyre::eyre; // For easier error creation
+use tracing::{Instrument, debug, error, info, warn};
 
-use crate::Error as AuraError;
-use crate::Result as AuraLibResult;
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::{
     AuraState, Block as AuraInternalBlock, ExecTxResult, ValidatorUpdate as AuraValidatorUpdate,
 };
+// use crate::Result as AuraLibResult; // Not used directly in this file after changes
+// use crate::Error as AuraError; // Not used directly in this file after changes
 
-// --- Malachite App Channel Imports ---
+// --- Malachite App Channel Imports (Corrected based on tutorial & common patterns) ---
 use malachitebft_app_channel::{
-    AppMsg, // Messages received by App from Consensus/Network
+    AppMsg,
     Channels,
     EngineHandle,
-    RxEvent, // For subscribing to engine events
+    RxEvent,
     TxEvent,
+    // start_engine is directly under malachitebft_app_channel
     app::{
-        ConsensusMsg, // Messages sent from App to Consensus
-        Context as MalachiteContext,
-        NetworkMsg,                        // Messages sent from App to Network
-        Node as MalachiteNode,             // The trait AuraNode will implement
-        NodeHandle as MalachiteNodeHandle, // Trait for the handle returned by start()
+        ConsensusMsg,
+        Context as MalachiteAppChannelContext, // Renamed for clarity
+        NetworkMsg,
+        Node as MalachiteAppChannelNode,
+        NodeHandle as MalachiteAppChannelNodeHandle,
         types::{
+            LocallyProposedValue, // Added this
             NilOrVal,
+            ProposedValue,
             Round,
-            SignedConsensusMsg, // For Codec
-            ValueId,
-            // Core types traits
+            ValueId, // Added ProposedValue
             core::{
                 Address as MalachiteAddressTrait, Extension as MalachiteExtensionTrait,
                 Height as MalachiteHeightTrait, Proposal as MalachiteProposalTrait,
@@ -41,37 +41,59 @@ use malachitebft_app_channel::{
                 ValidatorSet as MalachiteValidatorSetTrait, Value as MalachiteValueTrait,
                 Vote as MalachiteVoteTrait,
             },
-            streaming::StreamMessage, // For Codec
-            sync::{
-                Request as MalachiteSyncRequest, Response as MalachiteSyncResponse,
-                Status as MalachiteSyncStatus,
-            }, // For Codec
         },
     },
 };
 
-// --- Malachite Config ---
-// Using the Malachite config types directly from the provided source
+// --- Malachite Config (as provided) ---
 use malachitebft_config::{
-    ConsensusConfig as MalachiteBftConsensusConfig,
-    P2pConfig as MalachiteBftP2pConfig,
-    // Assuming a top-level config like the tutorial's `Config`
-    // This is a placeholder, you need to define/find Malachite's actual top-level config struct
-    // that incorporates P2pConfig, ConsensusConfig, paths to keys, genesis, etc.
+    ConsensusConfig as MalachiteBftConsensusConfig, P2pConfig as MalachiteBftP2pConfig,
 };
-// Placeholder for Malachite's top-level config, similar to tutorial's `Config`
+
+// --- Malachite Core Types ---
+use malachitebft_core_types::{
+    // Types for Context often come from here or malachitebft_test
+    // For example, if MalachiteAppChannelContext requires Ctx: malachitebft_core_types::Context
+    Context as MalachiteCoreContextTrait, // The more fundamental Context trait
+    // If specific types like Height, Address are needed from core_types directly:
+    // height::Height as MalachiteCoreHeight, // Example
+    NodeKey, // For P2P identity
+};
+
+// --- Malachite Test Types (for concrete implementations of traits) ---
+use malachitebft_test::{
+    Address as TestAddress,
+    Context as TestContext, // A concrete impl of MalachiteCoreContextTrait
+    Ed25519Provider,
+    Extension as TestExtension,
+    Genesis as TestGenesis,
+    Height as TestHeight,
+    Keypair as TestKeypair,
+    PrivateKey as TestPrivateKey, // Validator signing key (Ed25519 based)
+    Proposal as TestProposal,
+    ProposalPart as TestProposalPart, // Concrete proposal part type
+    PublicKey as TestPublicKey,
+    Validator as TestValidator,
+    ValidatorSet as TestValidatorSet,
+    Value as TestValue, // Simple u64 value
+    Vote as TestVote,
+    codec::proto::ProtobufCodec, // Codec implementation
+    // types for streaming might be here or in core_types / app_channel
+    streaming::StreamContent, // Corrected path from clippy hint
+};
+
+// --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MalachiteTopLevelConfig {
     pub moniker: String,
-    pub home: PathBuf, // Base directory for keys, db, etc.
-    // Paths relative to 'home' or absolute
+    pub home: PathBuf,
     pub genesis_file: PathBuf,
     pub priv_validator_key_file: PathBuf,
-    // pub node_key_file: PathBuf, // NodeKey for P2P might be separate or part of priv_validator_key
+    pub node_key_file: PathBuf, // Added for explicit P2P node key
     pub p2p: MalachiteBftP2pConfig,
     pub consensus: MalachiteBftConsensusConfig,
-    // Add other necessary fields like mempool, rpc, logging, etc.
-    // pub logging: LoggingConfig,
+    // pub log_level: String, // Example from Tendermint/CometBFT
+    // pub rpc_laddr: String, // Example
 }
 impl MalachiteTopLevelConfig {
     pub fn load_toml_file<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
@@ -80,58 +102,22 @@ impl MalachiteTopLevelConfig {
     }
 }
 
-// --- Malachite Core Types & Test Types ---
-// For simplicity, using types from malachitebft-test as the tutorial suggests.
-// You'll need to ensure these dependencies are in aura-node-lib/Cargo.toml
-// and potentially rename them (e.g., `malachitebft_test_types = { package = "informalsystems-malachitebft-test", ... }`)
-use malachitebft_core_types::NodeKey;
-use malachitebft_test::{
-    Address as TestAddress,     // Implements MalachiteAddressTrait
-    Context as TestContext,     // Implements MalachiteContext
-    Ed25519Provider,            // Implements SigningScheme
-    Extension as TestExtension, // Implements MalachiteExtensionTrait
-    Genesis as TestGenesis,     // Contains initial validator set
-    Height as TestHeight,       // Implements MalachiteHeightTrait
-    Keypair as TestKeypair,
-    PrivateKey as TestPrivateKey,     // Validator signing key
-    Proposal as TestProposal,         // Implements MalachiteProposalTrait
-    ProposalPart as TestProposalPart, // Implements MalachiteProposalPartTrait
-    PublicKey as TestPublicKey,
-    Validator as TestValidator,       // Implements MalachiteValidatorTrait
-    ValidatorSet as TestValidatorSet, // Implements MalachiteValidatorSetTrait
-    Value as TestValue, // Implements MalachiteValueTrait - OURS WILL BE AuraInternalBlock
-    Vote as TestVote,   // Implements MalachiteVoteTrait
-    codec::proto::ProtobufCodec, // Implements Codec
-}; // This is distinct, for P2P identity.
-
-// --- Aura's specific Value type for consensus (our Block) ---
-// It needs to implement `MalachiteValueTrait`.
-// For now, AuraInternalBlock is fine. We'll need to implement MalachiteValueTrait for it.
-// type AuraConsensusValue = AuraInternalBlock; // This will be `Ctx::Value`
-
 // --- Aura's specific Context for Malachite ---
-// This struct will implement `malachitebft_app_channel::app::types::core::Context`
 #[derive(Clone, Debug)]
-pub struct AuraMalachiteContext; // Needs to be a unit struct or have fields
+pub struct AuraMalachiteContext;
 
-// TODO: Implement `MalachiteContext` for `AuraMalachiteContext`
-// This involves defining associated types (Height, Address, Value, etc.)
-// and implementing methods like `select_proposer`, `new_proposal`, etc.
-// For many types, we can reuse `malachitebft_test` types initially.
-// Crucially, `type Value = AuraInternalBlock;`
-// and `AuraInternalBlock` must implement `MalachiteValueTrait`.
-
-impl MalachiteContext for AuraMalachiteContext {
-    type Address = TestAddress;
-    type Height = TestHeight; // Using test height for now
-    type ProposalPart = TestProposalPart; // Placeholder, needs to be parts of AuraInternalBlock
-    type Proposal = TestProposal; // Placeholder, needs to be AuraInternalBlock + header info
+// Implements the Context trait from `malachitebft_app_channel::app::Context`
+impl MalachiteAppChannelContext for AuraMalachiteContext {
+    type Address = TestAddress; // Using test address for validators
+    type Height = TestHeight; // Using test height
+    type ProposalPart = TestProposalPart; // Using test proposal part
+    type Proposal = TestProposal; // Using test proposal
     type Validator = TestValidator;
     type ValidatorSet = TestValidatorSet;
-    type Value = AuraInternalBlock; // Our Block type!
+    type Value = AuraInternalBlock; // Our application's block is the consensus value
     type Vote = TestVote;
-    type Extension = TestExtension; // Or a custom Aura extension type
-    type SigningScheme = Ed25519Provider; // Malachite uses Ed25519 for consensus messages
+    type Extension = TestExtension;
+    type SigningScheme = Ed25519Provider; // Ed25519 for consensus messages
 
     fn select_proposer<'a>(
         &self,
@@ -139,33 +125,44 @@ impl MalachiteContext for AuraMalachiteContext {
         height: Self::Height,
         round: Round,
     ) -> &'a Self::Validator {
-        // Simple round-robin proposer selection for now, adapt as needed
-        let index = (height.as_u64() + round.as_u32() as u64) as usize % validator_set.len();
-        validator_set
-            .validators()
-            .get(index)
-            .expect("Validator set should not be empty")
+        let total_power = validator_set.total_power();
+        if total_power == 0 {
+            panic!("Cannot select proposer from validator set with zero total power");
+        }
+        // Simple round-robin based on accumulated power, similar to Tendermint's default.
+        // This needs a more robust implementation for production.
+        let seed = height.as_u64().wrapping_add(round.as_u32() as u64);
+        let mut proposer_index = 0;
+        let mut accumulated_power = 0u64;
+        for (i, val) in validator_set.validators().iter().enumerate() {
+            accumulated_power = accumulated_power.wrapping_add(val.power());
+            if accumulated_power >= (seed % total_power) + 1 {
+                // Ensure non-zero for modulo
+                proposer_index = i;
+                break;
+            }
+        }
+        validator_set.validators().get(proposer_index).unwrap()
     }
 
-    // This creates Malachite's Proposal type, which wraps our Value (AuraInternalBlock)
     fn new_proposal(
         height: Self::Height,
         round: Round,
         value: Self::Value, // This is AuraInternalBlock
         pol_round: Round,
-        address: Self::Address,
+        address: Self::Address, // Proposer's address
     ) -> Self::Proposal {
-        // TestProposal::new expects TestValue. We need to adapt.
-        // This is a major point of integration.
-        // For now, let's create a dummy TestProposal if TestValue can be made from AuraInternalBlock id
-        // This requires AuraInternalBlock to have an id() method usable for TestValue::id()
-        warn!("AuraMalachiteContext::new_proposal is using a placeholder implementation!");
-        let dummy_test_value_id = value.height as u64; // Highly simplified
+        // `TestProposal` expects a `TestValue`. We need to map `AuraInternalBlock`'s ID
+        // to something `TestValue` can use, or `TestProposal` needs to be generic over `Value::Id`.
+        // The `TestValue` is a simple u64. Our `AuraInternalBlock::id()` returns u64 (height).
+        warn!(
+            "AuraMalachiteContext::new_proposal is using Aura block height as TestValue for TestProposal"
+        );
         TestProposal::new(
             height,
             round,
             pol_round,
-            TestValue::new(dummy_test_value_id),
+            TestValue::new(value.id()),
             address,
         )
     }
@@ -173,7 +170,7 @@ impl MalachiteContext for AuraMalachiteContext {
     fn new_prevote(
         height: Self::Height,
         round: Round,
-        value_id: NilOrVal<ValueId<Self>>,
+        value_id: NilOrVal<ValueId<Self>>, // ValueId<Self> is NilOrVal<u64>
         address: Self::Address,
     ) -> Self::Vote {
         TestVote::new_prevote(height, round, value_id, address)
@@ -190,56 +187,52 @@ impl MalachiteContext for AuraMalachiteContext {
 }
 
 // Our AuraInternalBlock needs to implement MalachiteValueTrait
+// It already derives Serialize, Deserialize, Debug, Clone. Add Eq, PartialOrd, Ord.
 impl MalachiteValueTrait for AuraInternalBlock {
-    type Id = u64; // Using block height as a simple ID for now. A hash would be better.
-
+    type Id = u64; // Block height as ID
     fn id(&self) -> Self::Id {
-        self.height // Or a hash of the block
+        self.height
     }
 }
 
-// --- AuraNode: Implements MalachiteNode trait ---
-#[derive(Clone)] // MalachiteNode requires Clone
+// --- AuraNode: Implements MalachiteAppChannelNode trait ---
+#[derive(Clone)]
 pub struct AuraNode {
-    // Fields from the tutorial's App struct
-    pub home_dir: PathBuf, // Base data directory for this node instance
-    pub aura_app_config: AuraAppNodeConfig, // Your existing app-level config for paths etc.
-    pub malachite_config_path: PathBuf, // Path to malachite's own config.toml
-
-    // Store app_level_private_key if needed for app logic, not directly by MalachiteNode trait
+    pub home_dir: PathBuf,
+    pub aura_app_config: AuraAppNodeConfig, // For app-specific paths like AuraState DB
+    pub malachite_config_path: PathBuf,     // Path to malachite_config.toml
     _app_level_private_key: Arc<aura_core::PrivateKey>,
 }
 
-// This struct will hold the handles to the running components
 pub struct AuraNodeRunningHandle {
-    pub app_logic_handle: JoinHandle<()>, // Handle to the task running our app_message_loop
-    pub engine_handle: EngineHandle<AuraMalachiteContext>, // Handle to Malachite's engine
-    pub tx_event: TxEvent<AuraMalachiteContext>, // For subscribing to events
+    pub app_logic_handle: JoinHandle<()>,
+    pub engine_handle: EngineHandle<AuraMalachiteContext>,
+    pub tx_event: TxEvent<AuraMalachiteContext>,
 }
 
 #[async_trait]
-impl MalachiteNodeHandle<AuraMalachiteContext> for AuraNodeRunningHandle {
+impl MalachiteAppChannelNodeHandle<AuraMalachiteContext> for AuraNodeRunningHandle {
     fn subscribe(&self) -> RxEvent<AuraMalachiteContext> {
         self.tx_event.subscribe()
     }
-
     async fn kill(&self, _reason: Option<String>) -> eyre::Result<()> {
-        // Gracefully shut down components
-        self.engine_handle.actor.kill_and_wait(None).await?; // Kill consensus engine actor
-        self.app_logic_handle.abort(); // Abort the application logic task
-        self.engine_handle.handle.abort(); // Abort the engine's main task handle
+        self.engine_handle.actor.kill_and_wait(None).await?;
+        self.app_logic_handle.abort();
+        self.engine_handle.handle.abort();
         Ok(())
     }
 }
 
 #[async_trait]
-impl MalachiteNode for AuraNode {
+impl MalachiteAppChannelNode for AuraNode {
     type Context = AuraMalachiteContext;
-    type Config = MalachiteTopLevelConfig; // Malachite's top-level config
-    type Genesis = TestGenesis; // Malachite's genesis (validator set)
-    type PrivateKeyFile = TestPrivateKey; // Malachite's validator signing key
-    type SigningProvider = Ed25519Provider; // For signing consensus messages
-    type NodeHandle = AuraNodeRunningHandle; // Our custom handle
+    // This is Malachite's own config struct, NOT your AuraAppNodeConfig
+    type Config = MalachiteTopLevelConfig;
+    type Genesis = TestGenesis; // Malachite's consensus genesis (validator set)
+    // This is the validator's private signing key for consensus messages (Ed25519)
+    type PrivateKeyFile = TestPrivateKey;
+    type SigningProvider = Ed25519Provider;
+    type NodeHandle = AuraNodeRunningHandle;
 
     fn get_home_dir(&self) -> PathBuf {
         self.home_dir.clone()
@@ -247,35 +240,41 @@ impl MalachiteNode for AuraNode {
 
     fn load_config(&self) -> eyre::Result<Self::Config> {
         MalachiteTopLevelConfig::load_toml_file(&self.malachite_config_path)
-            .map_err(|e| eyre::eyre!("Failed to load Malachite config: {}", e))
+            .map_err(|e| eyre!("Failed to load Malachite config: {}", e))
     }
 
-    // --- Key Management (for Malachite's consensus keys) ---
     fn get_address(&self, pk: &TestPublicKey) -> TestAddress {
+        // Takes Malachite's PublicKey type
         TestAddress::from_public_key(pk)
     }
 
     fn get_public_key(&self, pk: &Self::PrivateKeyFile) -> TestPublicKey {
+        // Takes Malachite's PrivateKey type
         pk.public_key()
     }
 
     fn get_keypair(&self, pk: Self::PrivateKeyFile) -> TestKeypair {
+        // Takes Malachite's PrivateKey type
         TestKeypair::ed25519_from_bytes(pk.inner().to_bytes())
             .expect("Failed to create keypair from TestPrivateKey bytes")
     }
 
     fn load_private_key(&self, file_content: Self::PrivateKeyFile) -> TestPrivateKey {
-        file_content // Assuming PrivateKeyFile is the key itself
+        file_content
     }
 
     fn load_private_key_file(&self) -> eyre::Result<Self::PrivateKeyFile> {
-        // Malachite's config should point to priv_validator_key.json
         let config = self.load_config()?;
-        let key_path = self.get_home_dir().join(config.priv_validator_key_file); // Path from config
+        // Path to priv_validator_key.json should be absolute or resolvable from home_dir
+        let key_path = if config.priv_validator_key_file.is_absolute() {
+            config.priv_validator_key_file.clone()
+        } else {
+            self.get_home_dir().join(config.priv_validator_key_file)
+        };
         let key_str = fs::read_to_string(&key_path)
-            .map_err(|e| eyre::eyre!("Failed to read private key file {:?}: {}", key_path, e))?;
+            .map_err(|e| eyre!("Failed to read private key file {:?}: {}", key_path, e))?;
         serde_json::from_str(&key_str)
-            .map_err(|e| eyre::eyre!("Failed to parse private key file {:?}: {}", key_path, e))
+            .map_err(|e| eyre!("Failed to parse private key file {:?}: {}", key_path, e))
     }
 
     fn get_signing_provider(&self, private_key: Self::PrivateKeyFile) -> Self::SigningProvider {
@@ -284,97 +283,91 @@ impl MalachiteNode for AuraNode {
 
     fn load_genesis(&self) -> eyre::Result<Self::Genesis> {
         let config = self.load_config()?;
-        let genesis_path = self.get_home_dir().join(config.genesis_file); // Path from config
+        let genesis_path = if config.genesis_file.is_absolute() {
+            config.genesis_file.clone()
+        } else {
+            self.get_home_dir().join(config.genesis_file)
+        };
         let genesis_str = fs::read_to_string(&genesis_path)
-            .map_err(|e| eyre::eyre!("Failed to read genesis file {:?}: {}", genesis_path, e))?;
+            .map_err(|e| eyre!("Failed to read genesis file {:?}: {}", genesis_path, e))?;
         serde_json::from_str(&genesis_str)
-            .map_err(|e| eyre::eyre!("Failed to parse genesis file {:?}: {}", genesis_path, e))
+            .map_err(|e| eyre!("Failed to parse genesis file {:?}: {}", genesis_path, e))
     }
 
     async fn start(&self) -> eyre::Result<Self::NodeHandle> {
-        info!("AuraNode (MalachiteNode impl) starting...");
-        let malachite_config = self.load_config()?; // Malachite's top-level config
+        info!("AuraNode (MalachiteNode impl) starting process...");
+        let malachite_config = self.load_config()?;
 
-        let span = tracing::info_span!("aura_node", moniker = %malachite_config.moniker);
+        let span = tracing::info_span!("aura_node_malachite_instance", moniker = %malachite_config.moniker);
         let _enter = span.enter();
 
-        // Load Malachite's private validator key for signing consensus messages
-        let priv_validator_key_file = self.load_private_key_file()?;
-        let priv_validator_key = self.load_private_key(priv_validator_key_file);
-        let _public_key = self.get_public_key(&priv_validator_key); // For logging or validator set creation
-        let _address = self.get_address(&_public_key); // This node's consensus address
+        let priv_validator_key_file_content = self.load_private_key_file()?;
+        let priv_validator_key = self.load_private_key(priv_validator_key_file_content);
 
-        // Signing provider for consensus messages
-        let signing_provider = self.get_signing_provider(priv_validator_key.clone()); // Clone if needed by engine later
-
-        // Aura's context for Malachite
         let aura_malachite_ctx = AuraMalachiteContext;
-
-        // Load Malachite's genesis (initial validator set)
         let malachite_genesis = self.load_genesis()?;
         let initial_validator_set = malachite_genesis.validator_set.clone();
         info!(
-            "Loaded Malachite genesis with {} validators.",
+            "Loaded Malachite consensus genesis with {} validators.",
             initial_validator_set.len()
         );
 
-        // Codec for network messages
-        let codec = ProtobufCodec; // As used in the tutorial
+        let codec = ProtobufCodec;
 
-        // Initialize AuraState (application state)
-        // Path for AuraState's DB comes from AuraAppNodeConfig
-        let aura_state_db_path = self.home_dir.join(&self.aura_app_config.db_path); // Ensure db_path is relative or handled
-        let app_state = AuraState::new(aura_state_db_path, self._app_level_private_key.clone())?;
+        // Path for AuraState's DB (application state)
+        let app_state_db_path = self.get_home_dir().join(
+            &self
+                .aura_app_config
+                .db_path
+                .file_name()
+                .expect("App DB path should have a filename"),
+        );
+        fs::create_dir_all(app_state_db_path.parent().unwrap())?; // Ensure parent dir exists
+        let app_state = AuraState::new(app_state_db_path, self._app_level_private_key.clone())?;
         let app_state_arc = Arc::new(Mutex::new(app_state));
 
-        // NodeKey for P2P (distinct from validator signing key)
-        // Path for NodeKey might be in malachite_config or a convention
-        // For now, assume it's `node_key.json` in `home_dir`.
-        let node_key_path = self.get_home_dir().join("node_key.json");
+        // P2P NodeKey
+        let node_key_path = if malachite_config.node_key_file.is_absolute() {
+            malachite_config.node_key_file.clone()
+        } else {
+            self.get_home_dir().join(&malachite_config.node_key_file)
+        };
         let node_key_str = fs::read_to_string(&node_key_path).map_err(|e| {
-            eyre::eyre!(
-                "Failed to read node_key.json from {:?}: {}",
+            eyre!(
+                "Failed to read P2P node_key file from {:?}: {}",
                 node_key_path,
                 e
             )
         })?;
-        let node_key: NodeKey = serde_json::from_str(&node_key_str).map_err(|e| {
-            eyre::eyre!(
-                "Failed to parse node_key.json from {:?}: {}",
-                node_key_path,
-                e
-            )
-        })?;
+        let node_key: NodeKey = serde_json::from_str(&node_key_str) // Assuming NodeKey is Deserialize
+            .map_err(|e| {
+                eyre!(
+                    "Failed to parse P2P node_key file from {:?}: {}",
+                    node_key_path,
+                    e
+                )
+            })?;
         info!("Loaded P2P NodeKey: {}", node_key.public_key().to_string());
 
-        // Start Malachite Engine using malachitebft_app_channel::start_engine
         info!("Calling malachitebft_app_channel::start_engine...");
         let (mut channels, engine_handle) = malachitebft_app_channel::start_engine(
-            aura_malachite_ctx.clone(), // Our context
-            codec,                      // Protobuf codec
-            priv_validator_key,         // The validator's signing key
-            node_key,                   // The node's P2P identity key
-            malachite_config.clone(),   // Malachite's top-level config
-            None, // Start height (Option<Self::Context::Height>), None means from genesis/WAL
-            initial_validator_set, // From Malachite's genesis
+            aura_malachite_ctx.clone(),
+            codec,
+            priv_validator_key, // Validator's signing key
+            node_key,           // Node's P2P identity key
+            malachite_config.clone(),
+            None, // Start height (Option<TestHeight>)
+            initial_validator_set,
         )
         .await?;
         info!("Malachite engine started via app-channel.");
 
         let tx_event_channel = channels.events.clone();
-
-        // Spawn the application logic loop to handle messages from Malachite
         let app_logic_task_span =
             tracing::info_span!("app_message_loop", moniker = %malachite_config.moniker);
         let app_logic_handle = tokio::spawn(
-            async move {
-                if let Err(e) =
-                    app_message_loop(app_state_arc, aura_malachite_ctx, &mut channels).await
-                {
-                    error!("Application message loop error: {:?}", e);
-                }
-            }
-            .instrument(app_logic_task_span),
+            app_message_loop(app_state_arc, aura_malachite_ctx, channels)
+                .instrument(app_logic_task_span),
         );
         info!("Spawned application message loop task.");
 
@@ -387,193 +380,209 @@ impl MalachiteNode for AuraNode {
 
     async fn run(self) -> eyre::Result<()> {
         let handles = self.start().await?;
-        // Wait for the application logic task to complete (it might run indefinitely)
-        // Or just let main exit if node start is meant to be non-blocking at this level.
-        // The tutorial's `app.run()` waits on `app_handle.await`.
         handles.app_logic_handle.await.map_err(Into::into)
     }
 }
 
-// The application message handling loop (analogous to `app::run` in the tutorial)
+// The application message handling loop
 async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
-    ctx: AuraMalachiteContext, // Pass context for creating proposals/votes if needed
-    channels: &mut Channels<AuraMalachiteContext>,
+    _ctx: AuraMalachiteContext, // Keep if needed for Ctx methods, else remove
+    mut channels: Channels<AuraMalachiteContext>, // `channels` needs to be mutable
 ) -> eyre::Result<()> {
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
             Some(msg) = channels.consensus.recv() => {
-                debug!("Received AppMsg from consensus: {:?}", msg_type_name(&msg));
+                debug!("AppLoop: Received AppMsg from consensus: {}", msg_type_name(&msg));
                 match msg {
                     AppMsg::ConsensusReady { reply, .. } => {
-                        let mut state = app_state_arc.lock().expect("Failed to lock app state for ConsensusReady");
-                        let start_height = state.height_value().increment_by(1); // Start at current_height + 1
-                        let validator_set = TestValidatorSet::new(vec![]); // Placeholder, load from state or genesis
-                        info!(%start_height, "Consensus is ready. Replying with StartHeight.");
-                        if reply.send((start_height, validator_set.clone())).is_err() {
-                            error!("Failed to send ConsensusReady reply (StartHeight)");
+                        let mut state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for ConsensusReady: {}", e))?;
+                        // Start from height 1 if current is 0 (genesis), else current_height + 1
+                        let start_height = if state.height_value() == 0 {
+                            TestHeight::new(1)
+                        } else {
+                            state.height_value().increment() // Assuming TestHeight implements MalachiteHeightTrait
+                        };
+                        // TODO: Load actual validator set for start_height from AuraState or TestGenesis
+                        let validator_set = TestValidatorSet::new(vec![]);
+                        info!(%start_height, "AppLoop: Consensus is ready. Replying with StartHeight.");
+                        if reply.send((start_height, validator_set)).is_err() {
+                            error!("AppLoop: Failed to send ConsensusReady reply (StartHeight)");
                         }
                     }
                     AppMsg::StartedRound { height, round, proposer, reply_value } => {
-                        let mut state = app_state_arc.lock().expect("Failed to lock app state for StartedRound");
-                        state.current_height = height; // Assuming TestHeight can be converted or stored
-                        state.current_round = round;
-                        // state.current_proposer = Some(proposer); // Proposer type mismatch
-                        info!(%height, %round, %proposer, "App: Started round.");
-                        // Tutorial re-sends existing proposal if any. For Aura, this means checking AuraState.
-                        // If reply_value.send(Some(existing_aura_block_as_malachite_proposal)).is_err() ...
-                         if reply_value.send(None).is_err() { // Send None if no pre-existing proposal for this H/R
-                            error!("Failed to send reply for StartedRound (value reply)");
+                        let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for StartedRound: {}", e))?;
+                        // Assuming AuraState has methods to update its internal current_height/round
+                        // state_guard.set_current_round_info(height, round, proposer);
+                        info!(%height, %round, %proposer, "AppLoop: Started round.");
+                         if reply_value.send(None).is_err() {
+                            error!("AppLoop: Failed to send reply for StartedRound (value reply)");
                          }
                     }
-                    AppMsg::GetValue { height, round, timeout: _, reply } => {
-                        info!(%height, %round, "App: Consensus requesting a value (block) to propose.");
-                        let mut state = app_state_arc.lock().expect("Failed to lock app state for GetValue");
+                    AppMsg::GetValue { height, round, reply, .. } => {
+                        info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
+                        let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for GetValue: {}", e))?;
 
-                        // Construct an AuraInternalBlock
-                        // In a real scenario, pull transactions from mempool via AuraState
+                        // Call AuraState's begin_block to prepare for new block proposal internally if needed
+                        // This might not be needed if GetValue is purely about fetching/creating the value
+                        // For now, AuraState.begin_block is called by AppMsg::Decided's StartHeight path
+
                         let new_aura_block = AuraInternalBlock {
-                            height: height.as_u64(), // Convert from TestHeight
-                            proposer_address: "aura_proposer_placeholder".to_string(), // Get actual proposer from context if needed
+                            height: height.as_u64(),
+                            proposer_address: "aura_node_self_proposing".to_string(), // Placeholder
                             timestamp: chrono::Utc::now().timestamp(),
-                            transactions: vec![], // TODO: Populate with transactions
+                            transactions: vec![],
                         };
 
-                        // This `LocallyProposedValue` is specific to `malachitebft-test` context.
-                        // We need to construct what Malachite expects for `Ctx::Value`.
-                        // `AuraMalachiteContext::Value` is `AuraInternalBlock`.
-                        // The reply channel expects `LocallyProposedValue<AuraMalachiteContext>`
-                        // which implies `malachitebft_app_channel::app::types::LocallyProposedValue`
-                        // This type takes Ctx::Value, so it expects AuraInternalBlock.
-
-                        // For now, we directly send our AuraInternalBlock as Ctx::Value.
-                        // The `LocallyProposedValue` wrapper might be from the tutorial's specific setup.
-                        // The `AppMsg::GetValue` reply channel is `Sender<LocallyProposedValue<C>>`
-                        // where `LocallyProposedValue<C>` has `height: C::Height, round: Round, value: C::Value`.
-                        let locally_proposed_value = malachitebft_app_channel::app::types::LocallyProposedValue {
-                            height, // C::Height
-                            round,  // Round
-                            value: new_aura_block, // C::Value
+                        let locally_proposed_value = LocallyProposedValue {
+                            height,
+                            round,
+                            value: new_aura_block.clone(), // Clone here
                         };
 
                         if reply.send(locally_proposed_value).is_err() {
-                            error!("Failed to send GetValue reply (LocallyProposedValue)");
+                            error!("AppLoop: Failed to send GetValue reply (LocallyProposedValue)");
                         }
-                        // TODO: Application should then stream this block out as parts via NetworkMsg::PublishProposalPart
-                        // This involves splitting `new_aura_block` into `Ctx::ProposalPart`s.
+
+                        // Stream the proposal parts
+                        // This requires AuraInternalBlock to be splittable into Ctx::ProposalPart (TestProposalPart)
+                        // For TestProposalPart, it might be simple (e.g. if it's just bytes)
+                        warn!("AppLoop: TODO: Implement streaming of AuraInternalBlock as TestProposalParts for GetValue");
+                        // Example structure (conceptual):
+                        // let stream_id = ctx.new_stream_id(height, round); // Ctx needs new_stream_id or similar
+                        // let parts: Vec<TestProposalPart> = split_aura_block_into_test_parts(&new_aura_block);
+                        // for (seq, part_content) in parts.into_iter().enumerate() {
+                        //    let stream_msg = StreamMessage::new(stream_id.clone(), seq as u64, StreamContent::Data(part_content));
+                        //    if channels.network.send(NetworkMsg::PublishProposalPart(stream_msg)).await.is_err() {
+                        //        error!("AppLoop: Failed to send proposal part to network");
+                        //    }
+                        // }
+                        // let fin_msg = StreamMessage::new(stream_id, parts.len() as u64, StreamContent::Fin);
+                        // if channels.network.send(NetworkMsg::PublishProposalPart(fin_msg)).await.is_err() { ... }
+
                     }
                     AppMsg::ReceivedProposalPart { from, part, reply } => {
                         let part_type_str = match &part.content {
-                            malachitebft_app_channel::app::types::streaming::StreamContent::Data(p) => format!("{:?}", p), // Adjust based on TestProposalPart
-                            malachitebft_app_channel::app::types::streaming::StreamContent::Fin => "Fin".to_string(),
+                            StreamContent::Data(p) => format!("{:?}", p),
+                            StreamContent::Fin => "Fin".to_string(),
                         };
-                        info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "App: Received proposal part.");
-                        // TODO: Implement logic to collect parts and reconstruct an AuraInternalBlock
-                        // let mut state = app_state_arc.lock().expect("State lock for ReceivedProposalPart");
-                        // let full_block_opt = state.handle_received_proposal_part(from, part)?;
-                        // The reply is `Sender<Option<ProposedValue<C>>>`
-                        // `ProposedValue<C>` has `height, round, valid_round, proposer, value: C::Value, validity`.
-                        if reply.send(None).is_err() { // Send None if block not yet complete
-                             error!("Failed to send ReceivedProposalPart reply");
+                        info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
+                        // TODO: Implement logic in AuraState or here to accumulate parts using a structure like PartStreamsMap.
+                        // When full block (AuraInternalBlock) is reassembled:
+                        // let reassembled_block: AuraInternalBlock = ...;
+                        // let proposed_value = ProposedValue {
+                        //    height: part.stream_id_height(), // Assuming stream_id contains H/R
+                        //    round: part.stream_id_round(),
+                        //    valid_round: Round::Nil, // Or from Init part
+                        //    proposer: from_address, // Need to map PeerId to Ctx::Address
+                        //    value: reassembled_block,
+                        //    validity: Validity::Pending, // Or Valid if signature verified
+                        // };
+                        // if reply.send(Some(proposed_value)).is_err() { ... }
+                        // else if reply.send(None).is_err() { ... }
+                        if reply.send(None).is_err() {
+                             error!("AppLoop: Failed to send ReceivedProposalPart reply");
                         }
                     }
                     AppMsg::Decided { certificate, extensions: _, reply } => {
-                        info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "App: Consensus decided. Committing block.");
-                        let mut state = app_state_arc.lock().expect("State lock for Decided");
-                        // `certificate.value_id` is `ValueId<C>`. Our `C::Value::Id` is u64 (block height).
-                        // We need to fetch the actual block from `AuraState`'s pending/staged data,
-                        // as the certificate only has the ID.
-                        // The `AuraState::commit_block` method needs to be adapted to this.
-                        // It currently assumes it has the full block internally.
-                        // For now, let's assume commit_block uses its internally staged block.
-                        match state.commit_block() {
+                        info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "AppLoop: Consensus decided. Committing block.");
+                        let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for Decided: {}", e))?;
+
+                        // Assuming certificate.value_id (which is ValueId<C> where C::Value::Id = u64)
+                        // matches the height of the block to be committed.
+                        // AuraState::commit_block internally uses its `pending_block_...` fields.
+                        // We need to ensure these were set correctly by a preceding `GetValue` (if proposer)
+                        // or by reconstructed block from `ReceivedProposalPart` (if verifier).
+                        // This part of the state flow needs careful review.
+                        // The tutorial's `State::commit` fetches the proposal from its store using value_id.
+
+                        // Simplified: Assume the block to commit is what was last processed/staged by `begin_block` and `deliver_tx`
+                        // This implies that before `Decided` is received, the app should have processed the block's contents
+                        // via `BeginBlock` (from Malachite consensus) and `DeliverTx` (if txs were in the block).
+                        // The tutorial's `State` seems to store the `ProposedValue` in its `store_undecided_proposal`.
+                        // Then `commit` fetches it.
+
+                        // For Aura, the sequence might be:
+                        // 1. Malachite calls App: BeginBlock(H) -> AuraState.begin_block(H, proposer, time)
+                        // 2. Malachite calls App: DeliverTx(tx1), DeliverTx(tx2) -> AuraState.deliver_tx(tx) for each
+                        // 3. Malachite calls App: EndBlock(H) -> AuraState.end_block(H)
+                        // 4. Malachite calls App: Commit() -> AuraState.commit_block() // This commits the staged block
+                        // So, when Decided arrives, the block for certificate.height should have already been
+                        // processed and is ready to be finalized by AuraState.commit_block().
+                        // The `certificate.value_id` should match `state_guard.pending_block_height` (as u64).
+
+                        if certificate.value_id.val_or_nil().map_or(true, |id_val| id_val != state_guard.pending_block_height) {
+                             error!("AppLoop: Decided value_id {} does not match pending block height {}. Inconsistency!",
+                                certificate.value_id, state_guard.pending_block_height);
+                             // Handle error, perhaps request restart for current height.
+                        }
+
+                        match state_guard.commit_block() { // commit_block uses pending_block_height
                             Ok(_app_hash) => {
-                                let next_height = state.height_value().increment_by(1);
+                                let next_height = state_guard.height_value().increment(); // Get new current height and increment
                                 let validator_set = TestValidatorSet::new(vec![]); // Placeholder
+                                info!("AppLoop: Commit successful. Replying to start next height: {}", next_height);
                                 if reply.send(ConsensusMsg::StartHeight(next_height, validator_set)).is_err() {
-                                    error!("Failed to send Decided reply (StartHeight)");
+                                    error!("AppLoop: Failed to send Decided reply (StartHeight)");
                                 }
                             }
                             Err(e) => {
-                                error!("App: Commit failed after Decided: {:?}. Requesting restart.", e);
-                                let current_height = state.height_value(); // Height to restart
+                                error!("AppLoop: Commit failed after Decided: {:?}. Requesting restart for height {}.", e, state_guard.pending_block_height);
+                                let current_pending_height = TestHeight::new(state_guard.pending_block_height); // Height to restart
                                 let validator_set = TestValidatorSet::new(vec![]); // Placeholder
-                                if reply.send(ConsensusMsg::RestartHeight(current_height, validator_set)).is_err() {
-                                     error!("Failed to send Decided reply (RestartHeight)");
+                                if reply.send(ConsensusMsg::RestartHeight(current_pending_height, validator_set)).is_err() {
+                                     error!("AppLoop: Failed to send Decided reply (RestartHeight)");
                                 }
                             }
                         }
                     }
-                    // --- Implement other AppMsg handlers based on the tutorial ---
-                    AppMsg::ExtendVote { height: _, round: _, value_id: _, reply } => {
-                        if reply.send(None).is_err() { // No extension for now
-                            error!("Failed to send ExtendVote reply");
-                        }
+                    AppMsg::ExtendVote { reply, .. } => {
+                        if reply.send(None).is_err() { error!("AppLoop: Failed to send ExtendVote reply"); }
                     }
-                    AppMsg::VerifyVoteExtension { height: _, round: _, value_id: _, extension: _, reply } => {
-                        if reply.send(Ok(())).is_err() { // Always valid for now
-                             error!("Failed to send VerifyVoteExtension reply");
-                        }
+                    AppMsg::VerifyVoteExtension { reply, .. } => {
+                        if reply.send(Ok(())).is_err() { error!("AppLoop: Failed to send VerifyVoteExtension reply");}
                     }
                     AppMsg::GetValidatorSet { height, reply } => {
-                        // let state = app_state_arc.lock().expect("State lock for GetValidatorSet");
-                        // let vs = state.get_validator_set_for_malachite(height); // You'd need this method
-                        let vs_placeholder = TestValidatorSet::new(vec![]); // Placeholder
+                        info!("AppLoop: GetValidatorSet called for height {}", height);
+                        // TODO: Implement actual validator set retrieval from AuraState based on height
+                        let vs_placeholder = TestValidatorSet::new(vec![]);
                         if reply.send(vs_placeholder).is_err() {
-                            error!("Failed to send GetValidatorSet reply");
+                            error!("AppLoop: Failed to send GetValidatorSet reply");
                         }
                     }
                     AppMsg::GetHistoryMinHeight { reply } => {
-                        // let state = app_state_arc.lock().expect("State lock for GetHistoryMinHeight");
-                        // let min_h = state.get_earliest_height_for_malachite(); // You'd need this method
-                        let min_h_placeholder = TestHeight::new(0); // Placeholder
+                         info!("AppLoop: GetHistoryMinHeight called");
+                        // TODO: Implement actual min height retrieval from AuraState
+                        let min_h_placeholder = TestHeight::new(0);
                         if reply.send(min_h_placeholder).is_err() {
-                             error!("Failed to send GetHistoryMinHeight reply");
+                             error!("AppLoop: Failed to send GetHistoryMinHeight reply");
                         }
                     }
                      AppMsg::GetDecidedValue { height, reply } => {
-                        // let state = app_state_arc.lock().expect("State lock for GetDecidedValue");
-                        // let decided_value_opt = state.get_decided_aura_block(height);
-                        // Convert AuraInternalBlock to RawDecidedValue if found
-                        if reply.send(None).is_err() { // Placeholder: value not found
-                            error!("Failed to send GetDecidedValue reply");
+                        info!("AppLoop: GetDecidedValue called for height {}", height);
+                        // TODO: Implement retrieval of decided AuraInternalBlock from AuraState
+                        // and convert to malachite_app_channel::app::types::RawDecidedValue
+                        if reply.send(None).is_err() {
+                            error!("AppLoop: Failed to send GetDecidedValue reply");
                         }
                     }
                     AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes, reply } => {
-                        info!(%height, %round, "App: Processing synced value ({} bytes)", value_bytes.len());
-                        // TODO: Decode value_bytes into AuraInternalBlock using your chosen Codec for Ctx::Value
-                        // let aura_block_result = YourCodec::decode::<AuraInternalBlock>(value_bytes);
-                        // if let Ok(aura_block) = aura_block_result {
-                        //    let proposed_value = ProposedValue { height, round, valid_round: Round::Nil, proposer, value: aura_block, validity: Validity::Valid };
-                        //    state.store_undecided_proposal(proposed_value.clone()).await?; // If AuraState has such a method
-                        //    if reply.send(proposed_value).is_err() { error!("...") }
-                        // } else {
-                        //    if reply.send(None).is_err() { error!("...") }
-                        // }
-                        if reply.send(None).is_err() { // Placeholder: decode failed or not implemented
-                           error!("Failed to send ProcessSyncedValue reply");
+                        info!(%height, %round, "AppLoop: Processing synced value ({} bytes)", value_bytes.len());
+                        // TODO: Decode value_bytes into AuraInternalBlock (Ctx::Value) using ProtobufCodec (or your codec)
+                        // Then create ProposedValue and send Some(proposed_value) in reply.
+                        // If decode fails, send None.
+                        if reply.send(None).is_err() {
+                           error!("AppLoop: Failed to send ProcessSyncedValue reply");
                         }
                     }
-                    AppMsg::PeerJoined { peer_id } => {
-                        info!(%peer_id, "App: Peer joined.");
-                        // let mut state = app_state_arc.lock().expect("State lock for PeerJoined");
-                        // state.add_peer(peer_id);
-                    }
-                    AppMsg::PeerLeft { peer_id } => {
-                         info!(%peer_id, "App: Peer left.");
-                        // let mut state = app_state_arc.lock().expect("State lock for PeerLeft");
-                        // state.remove_peer(peer_id);
-                    }
-                    // Add other message handlers as needed
-                    _ => {
-                        warn!("Unhandled AppMsg variant: {:?}", msg_type_name(&msg));
-                    }
+                    AppMsg::PeerJoined { peer_id } => { info!(%peer_id, "AppLoop: Peer joined."); }
+                    AppMsg::PeerLeft { peer_id } => { info!(%peer_id, "AppLoop: Peer left.");}
+                    _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                 }
             }
-            // Handle other events or shutdown signals if necessary
             else => {
-                info!("App message loop: Consensus channel closed or no message. Exiting loop.");
+                info!("AppLoop: Consensus channel closed or select! macro completed. Exiting loop.");
                 break;
             }
         }
@@ -581,6 +590,7 @@ async fn app_message_loop(
     Ok(())
 }
 
+// Helper to get a string name for AppMsg variants for logging
 fn msg_type_name<C: MalachiteContext>(msg: &AppMsg<C>) -> &'static str {
     match msg {
         AppMsg::ConsensusReady { .. } => "ConsensusReady",
@@ -597,8 +607,7 @@ fn msg_type_name<C: MalachiteContext>(msg: &AppMsg<C>) -> &'static str {
         AppMsg::ProcessSyncedValue { .. } => "ProcessSyncedValue",
         AppMsg::PeerJoined { .. } => "PeerJoined",
         AppMsg::PeerLeft { .. } => "PeerLeft",
-        // Add any other variants from your Malachite version's AppMsg
-        #[allow(unreachable_patterns)] // In case some variants are not public or covered by _
+        #[allow(unreachable_patterns)]
         _ => "UnknownAppMsg",
     }
 }
