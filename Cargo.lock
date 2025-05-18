@@ -574,6 +574,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aura-core",
+ "hex",
  "informalsystems-malachitebft-app",
  "informalsystems-malachitebft-config",
  "informalsystems-malachitebft-core-consensus",

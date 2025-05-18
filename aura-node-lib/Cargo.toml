@@ -22,6 +22,7 @@ libp2p = { version = "0.55.0", default-features = false, features = [
 
 # State Storage
 redb = "2.1.0" # Or latest stable version
+hex = "0.4.3"
 
 # Async
 tokio = { version = "1", features = [
