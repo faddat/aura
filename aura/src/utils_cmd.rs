@@ -1,6 +1,6 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Subcommand, builder::PathBufValueParser};
 use std::path::PathBuf;
 
 #[derive(Subcommand, Debug)]
@@ -22,12 +22,14 @@ pub async fn handle_utils_command(
     _config_path: &PathBuf,
 ) -> Result<()> {
     match commands {
-        UtilsCommands::ParseGenesis { genesis_path } => {
-            tracing::info!("Parsing genesis file: {:?}", genesis_path);
+        UtilsCommands::ParseGenesis {
+            genesis_path: _genesis_path,
+        } => {
+            tracing::info!("Parsing genesis file: {:?}", _genesis_path);
             // Call aura_core::genesis::parse_and_display(&genesis_path)
             println!(
                 "Utils parse-genesis command for {:?} executed (implementation pending in aura-core).",
-                genesis_path
+                _genesis_path
             );
         }
         UtilsCommands::KeyFromSeed {

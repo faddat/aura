@@ -1,7 +1,7 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Subcommand, Debug)]
 pub enum NodeCommands {
@@ -21,7 +21,7 @@ pub enum NodeCommands {
 pub async fn handle_node_command(
     commands: NodeCommands,
     app_config: &AuraAppConfig,
-    _config_path: &PathBuf, // In case we need to reload or save specific parts
+    _config_path: &Path, // In case we need to reload or save specific parts
 ) -> Result<()> {
     match commands {
         NodeCommands::Start { seed_phrase } => {
