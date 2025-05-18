@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
@@ -31,8 +32,7 @@ impl AuraNode {
             Runtime::new().map_err(|e| Error::Other(format!("Failed to create runtime: {}", e)))?;
 
         // Create node ID from configuration
-        let node_id = NodeId::from_str(&config.node_id)
-            .map_err(|_| Error::Config("Invalid node ID format".to_string()))?;
+        let node_id = config.node_id.clone();
 
         // Initialize state
         let state = Arc::new(Mutex::new(AuraState::new(&config.db_path, private_key)?));
@@ -98,6 +98,6 @@ impl AuraNode {
     /// Get the current blockchain height
     pub fn height(&self) -> Result<u64> {
         let state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
-        Ok(state.height().0)
+        Ok(state.height_value())
     }
 }

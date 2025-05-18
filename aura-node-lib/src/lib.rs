@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use aura_core::CoreError;
+use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 
 // Re-export Malachite types for use in our crate
 pub use malachitebft_app;
@@ -9,14 +10,6 @@ pub use malachitebft_core_consensus;
 pub use malachitebft_core_types;
 pub use malachitebft_engine;
 pub use malachitebft_peer;
-
-// Create a types module for convenient re-exports
-pub mod types {
-    pub use malachitebft_core_types::{
-        Height, Round, Signature, Value as Block, ValueId as BlockId,
-    };
-    pub use malachitebft_peer::PeerId as NodeId;
-}
 
 mod application;
 mod config;
@@ -61,6 +54,40 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Database error: {0}")]
+    Database(String),
+
     #[error("Other error: {0}")]
     Other(String),
+}
+
+// Add From implementations for database errors
+impl From<DatabaseError> for Error {
+    fn from(err: DatabaseError) -> Self {
+        Self::Database(err.to_string())
+    }
+}
+
+impl From<TransactionError> for Error {
+    fn from(err: TransactionError) -> Self {
+        Self::Database(err.to_string())
+    }
+}
+
+impl From<TableError> for Error {
+    fn from(err: TableError) -> Self {
+        Self::Database(err.to_string())
+    }
+}
+
+impl From<StorageError> for Error {
+    fn from(err: StorageError) -> Self {
+        Self::Database(err.to_string())
+    }
+}
+
+impl From<CommitError> for Error {
+    fn from(err: CommitError) -> Self {
+        Self::Database(err.to_string())
+    }
 }
