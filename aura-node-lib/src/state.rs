@@ -1,46 +1,47 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
-use aura_core::Transaction;
-use redb::{Database, TableDefinition, WriteTransaction}; // Added WriteTransaction
+use aura_core::Transaction; // Just import what we're using
+use chrono; // For timestamp handling
+use redb::{Database, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
-use crate::{Error, Result as AuraResult}; // Crate-local Result and Error
+use crate::{Error, Result as AuraResult};
 
-// Simple validator update structure
-#[derive(Debug, Clone)]
+/// Simple validator update structure to match what would be returned from EndBlock
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorUpdate {
-    pub validator_id: String,
-    pub power: u64,
+    pub pub_key: Vec<u8>, // Public key of the validator
+    pub power: i64,       // Voting power
 }
 
-// Simple Block structure for node-lib internal use, not tied to Malachite yet.
-// This will hold aura_core::Transaction objects.
+// Simple Block structure for node-lib internal use.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub height: u64,
-    // pub round: u64, // Round is managed by consensus, may not be needed in app block
-    pub proposer: String, // Proposer ID comes from Malachite's BeginBlock
+    pub proposer_address: String, // From Malachite's BeginBlock (typically hex-encoded public key hash)
+    pub timestamp: i64,           // Unix timestamp (seconds) from chrono
     pub transactions: Vec<Transaction>,
-    // pub timestamp: u64, // Timestamp comes from Malachite's BeginBlock header
-    // pub app_hash: Vec<u8>, // Hash of the state after this block is applied
+    // app_hash is the hash of the state *after* this block is applied,
+    // usually stored with the *next* block's header or in metadata.
+    // For simplicity, we calculate it and it's returned by commit, not stored in this struct directly.
 }
 
 /// Table definitions for the state database
-const METADATA_TABLE: TableDefinition<&str, u64> = TableDefinition::new("metadata");
+const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
+// Storing height as LE bytes, and app_hash as raw bytes.
+// Keys: "current_height", "current_app_hash"
+
 const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks");
 const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions");
-// TODO: Add tables for nullifiers and note commitments for proper state management
-// const NULLIFIERS_TABLE: TableDefinition<&[u8; 32], ()> = TableDefinition::new("nullifiers");
-// const COMMITMENTS_TABLE: TableDefinition<&[u8; 32], ()> = TableDefinition::new("commitments");
+// TODO: Add tables for nullifiers and note commitments
 
-/// Represents the execution result of a transaction. Placeholder for now.
+/// Represents the execution result of a transaction.
 #[derive(Debug, Clone, Default)]
 pub struct ExecTxResult {
-    pub code: u32, // 0 for success
+    pub code: u32,
     pub log: String,
-    // Add other fields like gas_used, events, etc. if needed
 }
 
 /// Represents the application state for the Aura blockchain
@@ -48,22 +49,23 @@ pub struct ExecTxResult {
 pub struct AuraState {
     db: Database,
     current_height: u64,
-    current_app_hash: Vec<u8>, // Store the latest committed app hash
+    current_app_hash: Vec<u8>,
 
     // Staging area for the current block being processed
     pending_block_height: u64,
-    pending_block_proposer: String, // From BeginBlock
+    pending_block_proposer_address: String, // From BeginBlock
+    pending_block_timestamp: i64,           // From BeginBlock, unix timestamp
     pending_transactions: Vec<Transaction>,
     // TODO: Stage nullifiers and commitments for the current block
     // pending_spent_nullifiers: Vec<Nullifier>,
     // pending_new_commitments: Vec<NoteCommitment>,
-    #[allow(dead_code)] // Will be used for actual signing or identity later
+    #[allow(dead_code)]
     node_private_key: Arc<aura_core::PrivateKey>,
 
-    // Simple in-memory mempool - Malachite will have its own,
-    // but this can be used by RPC to submit to Malachite via CheckTx
     mempool: VecDeque<Transaction>,
 }
+
+const GENESIS_APP_HASH_PLACEHOLDER: &[u8] = b"genesis_app_hash_placeholder_for_height_0";
 
 impl AuraState {
     pub fn new(
@@ -81,8 +83,9 @@ impl AuraState {
             db,
             current_height,
             current_app_hash,
-            pending_block_height: 0, // Initialized by begin_block
-            pending_block_proposer: String::new(),
+            pending_block_height: 0,
+            pending_block_proposer_address: String::new(),
+            pending_block_timestamp: chrono::Utc::now().timestamp(), // Default, current time
             pending_transactions: Vec::new(),
             node_private_key,
             mempool: VecDeque::new(),
@@ -93,49 +96,43 @@ impl AuraState {
         let read_txn = db.begin_read()?;
         let metadata_table = read_txn.open_table(METADATA_TABLE)?;
 
-        let height = metadata_table
-            .get("current_height")?
-            .map(|guard| guard.value())
+        let height_bytes_opt = metadata_table.get("current_height")?;
+        let height = height_bytes_opt
+            .map(|guard| {
+                let bytes_slice = guard.value();
+                if bytes_slice.len() == 8 {
+                    u64::from_le_bytes(
+                        bytes_slice
+                            .try_into()
+                            .expect("Slice to array conversion failed for height"),
+                    )
+                } else {
+                    warn!("Invalid byte length for 'current_height' in DB, defaulting to 0.");
+                    0
+                }
+            })
             .unwrap_or(0);
 
-        // For app_hash, we might store it directly or recompute if necessary.
-        // For simplicity, let's assume we can compute it from height if not stored,
-        // or store a dedicated "app_hash" key.
-        // For now, a simple hash of height.
-        let app_hash = if height == 0 {
-            // Initial app hash for genesis state (empty or predefined)
-            // Let's use a hash of "genesis" for a non-zero initial hash.
+        let app_hash_opt = metadata_table.get("current_app_hash")?;
+        let app_hash = app_hash_opt
+            .map(|guard| guard.value().to_vec())
+            .unwrap_or_else(|| {
+                info!("No 'current_app_hash' found in DB, using initial genesis hash.");
+                let mut hasher = Sha256::new();
+                hasher.update(GENESIS_APP_HASH_PLACEHOLDER);
+                hasher.finalize().to_vec()
+            });
+
+        // Ensure consistency: if height is 0, app_hash must be the defined genesis hash.
+        let final_app_hash = if height == 0 {
             let mut hasher = Sha256::new();
-            hasher.update(b"genesis_app_hash_placeholder_for_height_0"); // Or a more robust genesis hash
+            hasher.update(GENESIS_APP_HASH_PLACEHOLDER);
             hasher.finalize().to_vec()
         } else {
-            // In a real system, you'd load the stored app_hash for `height`.
-            // For this example, we'll re-calculate based on height.
-            // This needs to be consistent with what `commit_block` stores.
-            // We'll need a way to fetch the app_hash for 'height'.
-            // This is a simplification for now.
-            // A proper way would be to load the last committed block and get its app_hash,
-            // or store `current_app_hash` in METADATA_TABLE.
-            metadata_table
-                .get("current_app_hash")?
-                .map(|_guard| {
-                    // Assuming app_hash is stored as Vec<u8>
-                    // This is tricky with redb's `Value` if not stored as fixed size or simple type.
-                    // For now, let's simplify and recompute, assuming it was stored.
-                    // This part needs a more robust solution for storing/retrieving app_hash.
-                    // For this iteration, let's calculate it.
-                    let mut hasher = Sha256::new();
-                    hasher.update(height.to_le_bytes());
-                    hasher.finalize().to_vec()
-                })
-                .unwrap_or_else(|| {
-                    // If not found (e.g. fresh DB that went past height 0 via external means)
-                    let mut hasher = Sha256::new();
-                    hasher.update(height.to_le_bytes()); // Fallback
-                    hasher.finalize().to_vec()
-                })
+            app_hash
         };
-        Ok((height, app_hash))
+
+        Ok((height, final_app_hash))
     }
 
     pub fn height_value(&self) -> u64 {
@@ -146,24 +143,24 @@ impl AuraState {
         Ok(self.current_app_hash.clone())
     }
 
-    // Method to add a transaction to the local mempool (e.g., from RPC)
-    // This tx would then be submitted to Malachite via CheckTx.
     pub fn add_transaction_to_local_mempool(&mut self, tx: Transaction) -> AuraResult<()> {
-        info!(
-            "Adding transaction {:?} to local mempool (for later CheckTx)",
-            tx.id()?
-        );
+        info!("Adding transaction {:?} to local mempool", tx.id()?);
         self.mempool.push_back(tx);
         Ok(())
     }
 
-    // --- Methods for Malachite AppService flow ---
-
     pub fn begin_block(
         &mut self,
-        height: u64, /*proposer: Vec<u8>, timestamp: u64 */
+        height: u64,
+        proposer_address: Vec<u8>, // Typically from Malachite's block.header.proposer_address
+        timestamp: i64,            // Unix timestamp in seconds
     ) -> AuraResult<()> {
-        debug!("State: BeginBlock for height {}", height);
+        debug!(
+            "State: BeginBlock for height {}, proposer: {}, timestamp: {}",
+            height,
+            hex::encode(&proposer_address),
+            timestamp
+        );
         if height != self.current_height + 1 {
             let err_msg = format!(
                 "BeginBlock: Proposed height {} is not sequential. Current height: {}",
@@ -173,8 +170,8 @@ impl AuraState {
             return Err(Error::State(err_msg));
         }
         self.pending_block_height = height;
-        // self.pending_block_proposer = hex::encode(proposer); // Proposer from Malachite
-        // self.pending_block_timestamp = timestamp; // Timestamp from Malachite
+        self.pending_block_proposer_address = hex::encode(proposer_address); // Store as hex string
+        self.pending_block_timestamp = timestamp;
         self.pending_transactions.clear();
         // self.pending_spent_nullifiers.clear();
         // self.pending_new_commitments.clear();
@@ -182,7 +179,7 @@ impl AuraState {
     }
 
     pub fn deliver_tx(&mut self, tx: Transaction) -> AuraResult<ExecTxResult> {
-        let tx_id = tx.id()?; // Calculate ID once
+        let tx_id = tx.id()?;
         debug!("State: DeliverTx for tx_id: {:?}", hex::encode(tx_id));
 
         if self.pending_block_height == 0 {
@@ -191,40 +188,25 @@ impl AuraState {
             ));
         }
 
-        // 1. (Mock ZKP) Verify proof
-        // if !aura_core::zkp::ZkpHandler::verify_proof(&pvk, &public_inputs, &tx.zk_proof_data)? {
-        //     return Ok(ExecTxResult { code: 1, log: "ZKP verification failed".to_string() });
-        // }
-        // For mock:
         debug!(
             "DeliverTx: Mock ZKP verification passed for tx {:?}",
             hex::encode(tx_id)
         );
-
-        // 2. Check nullifiers (mock for now)
-        //    In a real system, check against a committed nullifier set.
-        //    And also check against pending nullifiers for the current block to prevent double-spend within the same block.
         for nullifier in &tx.spent_nullifiers {
             debug!(
                 "DeliverTx: Checking nullifier {:?} (mock)",
                 nullifier.to_bytes()
             );
-            // TODO: Add to `self.pending_spent_nullifiers` and check for duplicates.
         }
-
-        // 3. Stage new note commitments (mock for now)
         for commitment in &tx.new_note_commitments {
             debug!(
                 "DeliverTx: Staging note commitment {:?} (mock)",
                 commitment.to_bytes()
             );
-            // TODO: Add to `self.pending_new_commitments`.
         }
-
         self.pending_transactions.push(tx);
-
         Ok(ExecTxResult {
-            code: 0, // Success
+            code: 0,
             log: format!("tx {} processed and staged", hex::encode(tx_id)),
         })
     }
@@ -237,14 +219,14 @@ impl AuraState {
                 self.pending_block_height, height
             )));
         }
-        // For now, we return no validator updates
+        // For now, we don't have validator updates
         Ok(vec![])
     }
 
     pub fn commit_block(&mut self) -> AuraResult<Vec<u8>> {
         if self.pending_block_height == 0 {
             return Err(Error::State(
-                "Commit called without a pending block. Did BeginBlock run?".to_string(),
+                "Commit called without a pending block.".to_string(),
             ));
         }
         info!(
@@ -252,38 +234,30 @@ impl AuraState {
             self.pending_block_height
         );
 
-        // Create the block to be stored
+        // Create block to store
         let block_to_store = Block {
             height: self.pending_block_height,
-            proposer: self.pending_block_proposer.clone(),
+            proposer_address: self.pending_block_proposer_address.clone(),
+            timestamp: self.pending_block_timestamp,
             transactions: self.pending_transactions.clone(),
         };
 
-        {
-            let write_txn = self.db.begin_write()?;
-
-            // --- Persist changes ---
-            Self::persist_block_and_state(&write_txn, &block_to_store)?;
-
-            // Update metadata
-            {
-                let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
-                metadata_table.insert("current_height", &block_to_store.height)?;
-            }
-
-            write_txn.commit()?;
-        }
-        // --- Persistence complete ---
-
-        // Calculate the new app_hash
+        // Calculate new app hash before DB transaction
         let new_app_hash = {
             let mut hasher = Sha256::new();
             hasher.update(block_to_store.height.to_le_bytes());
             for tx in &block_to_store.transactions {
                 hasher.update(tx.id()?);
             }
+            // Add proposer and timestamp to app_hash for more robustness
+            hasher.update(block_to_store.proposer_address.as_bytes());
+            hasher.update(block_to_store.timestamp.to_le_bytes());
+            // TODO: Include Merkle roots of nullifiers/commitments
             hasher.finalize().to_vec()
         };
+
+        // Save to database
+        self.save_block_to_db(&block_to_store, &new_app_hash)?;
 
         // Update in-memory state
         self.current_height = block_to_store.height;
@@ -297,23 +271,42 @@ impl AuraState {
         );
 
         // Reset pending state
-        self.pending_block_height = 0; // Mark as no block pending
+        self.pending_block_height = 0;
         self.pending_transactions.clear();
+        // self.pending_spent_nullifiers.clear();
+        // self.pending_new_commitments.clear();
 
         Ok(new_app_hash)
     }
 
-    fn persist_block_and_state(
+    // Save block data to the database in a separate function to avoid borrow issues
+    fn save_block_to_db(&self, block: &Block, app_hash: &[u8]) -> AuraResult<()> {
+        let write_txn = self.db.begin_write()?;
+        Self::persist_block_and_txs(&write_txn, block)?;
+
+        // Save metadata
+        let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
+        metadata_table.insert("current_height", &block.height.to_le_bytes().as_slice())?;
+        metadata_table.insert("current_app_hash", app_hash)?;
+
+        // Drop all tables before committing
+        drop(metadata_table);
+
+        // Now it's safe to commit
+        write_txn.commit()?;
+
+        Ok(())
+    }
+
+    fn persist_block_and_txs(
         write_txn: &WriteTransaction,
         block_to_store: &Block,
     ) -> AuraResult<()> {
-        // Store the block itself
         let mut blocks_table = write_txn.open_table(BLOCKS_TABLE)?;
         let block_bytes = serde_json::to_vec(block_to_store)
             .map_err(|e| Error::State(format!("Failed to serialize block: {}", e)))?;
         blocks_table.insert(&block_to_store.height, block_bytes.as_slice())?;
 
-        // Store transactions by ID for indexing (optional)
         let mut tx_table = write_txn.open_table(TRANSACTIONS_TABLE)?;
         for tx in &block_to_store.transactions {
             let tx_id_bytes = tx.id()?;
@@ -321,27 +314,6 @@ impl AuraState {
                 .map_err(|e| Error::State(format!("Failed to serialize tx: {}", e)))?;
             tx_table.insert(tx_id_bytes.as_ref(), tx_bytes.as_slice())?;
         }
-
-        // TODO: Persist actual nullifiers and commitments
-        // let mut nullifiers_db_table = write_txn.open_table(NULLIFIERS_TABLE)?;
-        // for nullifier in &self.pending_spent_nullifiers {
-        //     nullifiers_db_table.insert(nullifier.to_bytes().as_ref(), &())?;
-        // }
-        // let mut commitments_db_table = write_txn.open_table(COMMITMENTS_TABLE)?;
-        // for commitment in &self.pending_new_commitments {
-        //     commitments_db_table.insert(commitment.to_bytes().as_ref(), &())?;
-        // }
         Ok(())
     }
-
-    // This method is now part of the commit_block logic
-    // pub fn commit_and_get_app_hash(&mut self) -> AuraResult<Vec<u8>> {
-    //     self.commit_block()
-    // }
-
-    // This method is replaced by the ABCI flow (begin_block, deliver_tx, end_block, commit)
-    // pub fn apply_block(&mut self, block: Block) -> AuraResult<()> { ... }
-
-    // This method is no longer called directly by AuraNode; Malachite handles block proposal.
-    // pub fn create_block_proposal(...) -> AuraResult<Block> { ... }
 }

@@ -21,8 +21,9 @@ libp2p = { version = "0.55.0", default-features = false, features = [
 ] } # Example: minimal set for identity types
 
 # State Storage
-redb = "2.1.0" # Or latest stable version
+redb = "2.1.0"    # Or latest stable version
 hex = "0.4.3"
+chrono = "0.4.37" # For timestamp handling
 
 # Async
 tokio = { version = "1", features = [

@@ -19,7 +19,7 @@ mod state;
 pub use application::AuraApplication;
 pub use config::AuraNodeConfig;
 pub use node::AuraNode; // Export AuraNode
-pub use state::{AuraState, Block}; // Export AuraState and Block from state module
+pub use state::{AuraState, Block, ValidatorUpdate}; // Export ValidatorUpdate as well
 
 /// Represents the state of the Aura node (potentially for higher-level management, currently unused)
 #[derive(Debug)]

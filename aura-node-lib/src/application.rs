@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono;
 use tracing::info;
 
 use crate::{
@@ -49,8 +50,9 @@ impl AppService for AuraApplication {
         // Create a new block with transactions from the mempool
         let block = Block {
             height,
-            proposer: self.node_id.clone(),
-            transactions: Vec::new(), // Empty for now
+            proposer_address: self.node_id.clone(),
+            timestamp: chrono::Utc::now().timestamp(), // Current timestamp
+            transactions: Vec::new(),                  // Empty for now
         };
 
         Ok(block)
@@ -63,7 +65,11 @@ impl AppService for AuraApplication {
         let mut state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
 
         // Call begin_block, deliver transactions, end_block, and commit
-        state.begin_block(block.height)?;
+        state.begin_block(
+            block.height,
+            block.proposer_address.as_bytes().to_vec(),
+            block.timestamp,
+        )?;
 
         for tx in block.transactions {
             state.deliver_tx(tx)?;
