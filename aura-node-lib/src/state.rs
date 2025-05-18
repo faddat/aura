@@ -112,14 +112,13 @@ impl AuraState {
             // In a real system, you'd load the stored app_hash for `height`.
             // For this example, we'll re-calculate based on height.
             // This needs to be consistent with what `commit_block` stores.
-            // Let's assume commit_block will store the actual app_hash.
             // We'll need a way to fetch the app_hash for 'height'.
             // This is a simplification for now.
             // A proper way would be to load the last committed block and get its app_hash,
             // or store `current_app_hash` in METADATA_TABLE.
             metadata_table
                 .get("current_app_hash")?
-                .map(|guard| {
+                .map(|_guard| {
                     // Assuming app_hash is stored as Vec<u8>
                     // This is tricky with redb's `Value` if not stored as fixed size or simple type.
                     // For now, let's simplify and recompute, assuming it was stored.
