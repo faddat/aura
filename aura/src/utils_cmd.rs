@@ -1,6 +1,6 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
-use clap::{Subcommand, builder::PathBufValueParser};
+use clap::Subcommand;
 use std::path::PathBuf;
 
 #[derive(Subcommand, Debug)]
