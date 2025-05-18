@@ -50,7 +50,7 @@ impl AppService for AuraApplication {
         let block = Block {
             height,
             proposer: self.node_id.clone(),
-            transactions: Vec::new(), // Empty for now
+            transactions: Vec::new(), // TODO: Retrieve transactions from the mempool and populate this field
         };
 
         Ok(block)
