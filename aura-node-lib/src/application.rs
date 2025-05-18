@@ -1,54 +1,29 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-// Corrected: AppService is likely directly from malachitebft_app
-use malachitebft_app::AppService as MalachiteAppService;
-use malachitebft_app_channel::app::types::sync::{Request, Response}; // This seems correct for Request/Response wrappers via app-channel
-
-// Corrected: These ABCI types are likely directly under malachitebft_core_types
-// OR, if using the app-channel convenience, they might be re-exported via
-// malachitebft_app_channel::app::*
-// Let's try direct first, then app-channel re-export if that fails.
-// The error "could not find `app` in `malachitebft_core_types`" suggests these are not under `::app` there.
-// They are usually top-level in the `abci` module of `core-types` or directly in `core-types::app` as a re-export.
-// Given clippy's specific help for ValidatorUpdate and PublicKey, they are likely directly under core_types or specific submodules.
-
+// Use the aliased package names as in Cargo.toml
+use malachitebft_app::{
+    AppService as MalachiteAppService,
+    types::sync::{Request, Response},
+};
 use malachitebft_core_types::{
-    // Assuming these are top-level or in specific submodules
-    BlockBeginRequest,
-    BlockBeginResponse,
-    BlockEndRequest,
-    BlockEndResponse,
-    CheckTxRequest,
-    CheckTxResponse,
-    CommitRequest,
-    CommitResponse,
-    CommitResponseData,
-    DeliverTxRequest,
-    DeliverTxResponse,
-    Header as MalachiteHeader, // malachitebft_core_types::block::Header
-    InfoRequest,
-    InfoResponse,
-    InfoResponseData,
-    InitChainRequest,
-    InitChainResponse,
-    PublicKey as MalachitePublicKey, // malachitebft_core_types::crypto::PublicKey
-    // Transaction as MalachiteTransaction, // If we need their Transaction type, but AppService uses Self::Transaction
-    QueryRequest,
-    QueryResponse,
-    QueryResponseData,
-    Timestamp,                                   // malachitebft_core_types::time::Timestamp
-    ValidatorUpdate as MalachiteValidatorUpdate, // malachitebft_core_types::validator::ValidatorUpdate
+    app::{
+        BlockBeginRequest, BlockBeginResponse, BlockEndRequest, BlockEndResponse, CheckTxRequest,
+        CheckTxResponse, CommitRequest, CommitResponse, CommitResponseData, DeliverTxRequest,
+        DeliverTxResponse, InfoRequest, InfoResponse, InfoResponseData, InitChainRequest,
+        InitChainResponse, QueryRequest, QueryResponse, QueryResponseData,
+    },
+    block::{Block as MalachiteBlock, Header as MalachiteHeader},
+    crypto::PublicKey as MalachitePublicKey,
+    time::Timestamp,
+    validator::ValidatorUpdate as MalachiteValidatorUpdate,
 };
 
 use tracing::{debug, error, info, warn};
 
 use crate::{
     Error as AuraError,
-    state::{
-        AuraState, Block as AuraInternalBlock, ExecTxResult,
-        ValidatorUpdate as AuraValidatorUpdateApp,
-    },
+    state::{AuraState, ValidatorUpdate as AuraValidatorUpdateApp},
 };
 
 #[derive(Debug)]
@@ -184,11 +159,9 @@ impl MalachiteAppService for AuraApplication {
 
     async fn begin_block(
         &self,
-        // Corrected: Malachite's Block type from malachitebft_core_types
-        request: Request<BlockBeginRequest<malachitebft_core_types::Block<Self::Transaction>>>,
+        request: Request<BlockBeginRequest<MalachiteBlock<Self::Transaction>>>,
     ) -> Response<BlockBeginResponse> {
         let req_data = request.into_inner();
-        // Corrected: MalachiteHeader from malachitebft_core_types
         let malachite_header: MalachiteHeader<Self::Transaction> = req_data.header;
 
         info!(
@@ -275,12 +248,10 @@ impl MalachiteAppService for AuraApplication {
                     .into_iter()
                     .map(
                         |app_update: AuraValidatorUpdateApp| MalachiteValidatorUpdate {
-                            // Use the imported MalachiteValidatorUpdate
-                            pub_key: MalachitePublicKey::from_raw_ed25519(
-                                // Use imported MalachitePublicKey
-                                &app_update.pub_key,
-                            )
-                            .unwrap_or_else(|| panic!("Invalid pubkey bytes for ValidatorUpdate")),
+                            pub_key: MalachitePublicKey::from_raw_ed25519(&app_update.pub_key)
+                                .unwrap_or_else(|| {
+                                    panic!("Invalid pubkey bytes for ValidatorUpdate")
+                                }),
                             power: app_update.power,
                         },
                     )

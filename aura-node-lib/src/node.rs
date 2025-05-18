@@ -1,77 +1,59 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex}; // Corrected Mutex import
+use std::sync::{Arc, Mutex};
 
+use tracing::{debug, error, info, warn, Instrument};
+use tokio::task::JoinHandle;
 use async_trait::async_trait;
 use eyre::eyre;
-use tracing::{Instrument, debug, error, info, warn};
 
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
-use crate::state::{AuraState, Block as AuraInternalBlock, ValidatorUpdate as AuraValidatorUpdate};
-// Note: AuraLibResult and AuraError are implicitly available via `crate::*`
+use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
+use crate::Result as AuraLibResult;
 
 // --- Malachite App Channel Imports ---
-// These types are central when using the app-channel.
 use malachitebft_app_channel::{
-    AppMsg,
-    Channels,
     EngineHandle,
     RxEvent,
     TxEvent,
     app::{
-        // Types re-exported by app-channel from malachitebft-app and core-types
-        ConsensusMsg,
-        Context as MalachiteAppChannelContext, // The Context trait we implement for channel-based apps
-        NetworkMsg,
+        Context as MalachiteAppChannelContext,
         Node as MalachiteAppChannelNode,
         NodeHandle as MalachiteAppChannelNodeHandle,
         types::{
-            LocallyProposedValue,
-            NilOrVal,
-            ProposedValue,
             Round,
-            ValueId,
-            // We might not need these sync types directly here if `start_engine` handles them
-            // sync::{Status as MalachiteSyncStatus, Request as MalachiteSyncRequest, Response as MalachiteSyncResponse},
             core::{
-                // Core traits for our context's associated types
-                Address as MalachiteAddressTrait,
-                Extension as MalachiteExtensionTrait,
-                Height as MalachiteHeightTrait,
-                Proposal as MalachiteProposalTrait,
-                ProposalPart as MalachiteProposalPartTrait,
-                SigningScheme as MalachiteSigningSchemeTrait,
                 Validator as MalachiteValidatorTrait,
-                ValidatorSet as MalachiteValidatorSetTrait,
-                Value as MalachiteValueTrait,
-                Vote as MalachiteVoteTrait,
             },
         },
     },
-    start_engine as malachite_start_engine, // Import start_engine
+    Channels,
+    AppMsg,
+    start_engine as malachite_start_engine,
 };
 
 // --- Malachite Config ---
 use malachitebft_config::{
-    ConsensusConfig as MalachiteBftConsensusConfig, P2pConfig as MalachiteBftP2pConfig,
+    Config as MalachiteBftConfig,
 };
 
 // --- Malachite Core Types ---
-// NodeKey is directly from malachitebft_core_types
-use malachitebft_core_types::NodeKey;
-// The fundamental Context trait, if needed for deeper generic bounds, though AppChannelContext should be primary.
-// use malachitebft_core_types::Context as MalachiteCoreContextTrait;
+use malachitebft_core_types::{
+    NodeKey,
+    crypto::PublicKey,
+    NilOrVal,
+    Round as MalachiteRound,
+    ValueId,
+};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
     Address as TestAddress,
-    // TestContext is an impl of MalachiteCoreContextTrait, not necessarily MalachiteAppChannelContext
-    // Context as TestContext,
     Ed25519Provider,
     Extension as TestExtension,
     Genesis as TestGenesis,
     Height as TestHeight,
-    Keypair as TestKeypair, // This type was unresolved, check if it's part of malachitebft-test's public API
+    Keypair as TestKeypair,
     PrivateKey as TestPrivateKey,
     Proposal as TestProposal,
     ProposalPart as TestProposalPart,
@@ -81,7 +63,6 @@ use malachitebft_test::{
     Value as TestValue,
     Vote as TestVote,
     codec::proto::ProtobufCodec,
-    streaming::StreamContent,
 };
 
 // --- Placeholder for Malachite's Top-Level Config ---
@@ -92,9 +73,10 @@ pub struct MalachiteTopLevelConfig {
     pub genesis_file: PathBuf,
     pub priv_validator_key_file: PathBuf,
     pub node_key_file: PathBuf,
-    pub p2p: MalachiteBftP2pConfig,
-    pub consensus: MalachiteBftConsensusConfig,
+    pub p2p: malachitebft_config::P2pConfig,
+    pub consensus: malachitebft_config::ConsensusConfig,
 }
+
 impl MalachiteTopLevelConfig {
     pub fn load_toml_file<P: AsRef<Path>>(path: P) -> Result<Self, anyhow::Error> {
         let config_str = fs::read_to_string(path.as_ref())?;
@@ -112,7 +94,7 @@ impl MalachiteAppChannelContext for AuraMalachiteContext {
     type Proposal = TestProposal;
     type Validator = TestValidator;
     type ValidatorSet = TestValidatorSet;
-    type Value = AuraInternalBlock;
+    type Value = AuraState;
     type Vote = TestVote;
     type Extension = TestExtension;
     type SigningScheme = Ed25519Provider;
@@ -195,7 +177,7 @@ impl MalachiteAppChannelContext for AuraMalachiteContext {
     }
 }
 
-impl MalachiteValueTrait for AuraInternalBlock {
+impl MalachiteValidatorTrait for AuraState {
     type Id = u64;
     fn id(&self) -> Self::Id {
         self.height
@@ -211,7 +193,7 @@ pub struct AuraNode {
 }
 
 pub struct AuraNodeRunningHandle {
-    pub app_logic_handle: JoinHandle<()>, // Corrected: tokio::task::JoinHandle
+    pub app_logic_handle: JoinHandle<()>,
     pub engine_handle: EngineHandle<AuraMalachiteContext>,
     pub tx_event: TxEvent<AuraMalachiteContext>,
 }
@@ -236,7 +218,6 @@ impl MalachiteAppChannelNode for AuraNode {
     type Genesis = TestGenesis;
     type PrivateKeyFile = TestPrivateKey;
     type SigningProvider = Ed25519Provider;
-    // Corrected: Ambiguous associated type
     type NodeHandle = AuraNodeRunningHandle;
 
     fn get_home_dir(&self) -> PathBuf {
@@ -256,9 +237,6 @@ impl MalachiteAppChannelNode for AuraNode {
         pk.public_key()
     }
 
-    // Check if TestKeypair is part of malachitebft-test's public API for this rev
-    // If not, this method might need to be removed or adapted if Malachite doesn't require it.
-    // The tutorial showed it, so it's likely available.
     fn get_keypair(&self, pk: Self::PrivateKeyFile) -> TestKeypair {
         TestKeypair::ed25519_from_bytes(pk.inner().to_bytes())
             .expect("Failed to create keypair from TestPrivateKey bytes")
@@ -299,7 +277,6 @@ impl MalachiteAppChannelNode for AuraNode {
     }
 
     async fn start(&self) -> eyre::Result<Self::NodeHandle> {
-        // Corrected associated type
         info!("AuraNode (MalachiteNode impl) starting process...");
         let malachite_config = self.load_config()?;
 
@@ -328,7 +305,7 @@ impl MalachiteAppChannelNode for AuraNode {
         );
         fs::create_dir_all(app_state_db_path.parent().unwrap_or_else(|| Path::new(".")))?;
         let app_state = AuraState::new(app_state_db_path, self._app_level_private_key.clone())
-            .map_err(|e| eyre!("Failed to create AuraState: {}", e))?; // Convert AuraError to eyre::Report
+            .map_err(|e| eyre!("Failed to create AuraState: {}", e))?;
         let app_state_arc = Arc::new(Mutex::new(app_state));
 
         let node_key_path = if malachite_config.node_key_file.is_absolute() {
@@ -354,7 +331,6 @@ impl MalachiteAppChannelNode for AuraNode {
 
         info!("Calling malachitebft_app_channel::start_engine...");
         let (channels, engine_handle) = malachite_start_engine(
-            // Use imported function
             aura_malachite_ctx.clone(),
             codec,
             priv_validator_key,
@@ -363,15 +339,14 @@ impl MalachiteAppChannelNode for AuraNode {
             None,
             initial_validator_set,
         )
-        .await?; // Removed `mut` from channels as it's moved into the spawned task
+        .await?
         info!("Malachite engine started via app-channel.");
 
         let tx_event_channel = channels.events.clone();
         let app_logic_task_span =
             tracing::info_span!("app_message_loop", moniker = %malachite_config.moniker);
         let app_logic_handle = tokio::spawn(
-            // Corrected: tokio::spawn
-            app_message_loop(app_state_arc, aura_malachite_ctx, channels) // Pass channels by value (move)
+            app_message_loop(app_state_arc, aura_malachite_ctx, channels)
                 .instrument(app_logic_task_span),
         );
         info!("Spawned application message loop task.");
@@ -417,7 +392,6 @@ async fn app_message_loop(
                         let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for StartedRound: {}", e))?;
                         state_guard.current_height = height.as_u64();
                         state_guard.current_round = round;
-                        // state_guard.current_proposer = Some(proposer.to_string()); // Assuming proposer can be stringified
                         info!(%height, %round, %proposer, "AppLoop: Started round.");
                          if reply_value.send(None).is_err() {
                             error!("AppLoop: Failed to send reply for StartedRound (value reply)");
@@ -425,9 +399,8 @@ async fn app_message_loop(
                     }
                     AppMsg::GetValue { height, round, reply, .. } => {
                         info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
-                        // let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for GetValue: {}", e))?;
 
-                        let new_aura_block = AuraInternalBlock {
+                        let new_aura_block = AuraState {
                             height: height.as_u64(),
                             proposer_address: "aura_node_self_proposing".to_string(),
                             timestamp: chrono::Utc::now().timestamp(),
@@ -445,18 +418,6 @@ async fn app_message_loop(
                         }
 
                         warn!("AppLoop: TODO: Implement streaming of AuraInternalBlock as TestProposalParts for GetValue");
-                        // Conceptual streaming logic:
-                        // let stream_id = StreamId::new(format!("{}-{}", height.as_u64(), round.as_u32()).into_bytes()); // Example stream ID
-                        // let parts: Vec<TestProposalPart> = vec![TestProposalPart::Data(malachitebft_test::ProposalData::new(new_aura_block.id() as u64))]; // Simplified part
-                        //
-                        // for (seq, part_content) in parts.into_iter().enumerate() {
-                        //    let stream_msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), seq as u64, StreamContent::Data(part_content));
-                        //    if channels.network.send(NetworkMsg::PublishProposalPart(stream_msg)).await.is_err() {
-                        //        error!("AppLoop: Failed to send proposal part to network");
-                        //    }
-                        // }
-                        // let fin_msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, parts.len() as u64, StreamContent::Fin);
-                        // if channels.network.send(NetworkMsg::PublishProposalPart(fin_msg)).await.is_err() { error!("Failed to send Fin part"); }
 
                     }
                     AppMsg::ReceivedProposalPart { from, part, reply } => {
@@ -465,7 +426,6 @@ async fn app_message_loop(
                             StreamContent::Fin => "Fin".to_string(),
                         };
                         info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
-                        // TODO: Accumulate parts and reconstruct AuraInternalBlock
                         if reply.send(None).is_err() {
                              error!("AppLoop: Failed to send ReceivedProposalPart reply");
                         }
@@ -474,19 +434,10 @@ async fn app_message_loop(
                         info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "AppLoop: Consensus decided. Committing block.");
                         let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for Decided: {}", e))?;
 
-                        // We need to ensure AuraState's pending_block_height was set correctly before commit.
-                        // This typically happens in AuraState::begin_block, which should be triggered by
-                        // the consensus engine before it proposes/receives a block for this height.
-                        // The `AppMsg::StartedRound` sets `state_guard.current_height`.
-                        // `AuraState::begin_block` uses `current_height + 1`.
-                        // So when `Decided` arrives for `certificate.height`, `AuraState::pending_block_height`
-                        // should already match `certificate.height` if `BeginBlock` was called for this height.
                         if certificate.height.as_u64() != state_guard.pending_block_height {
                              error!("AppLoop: Decided height {} does not match pending block height {}. This indicates a potential state mismatch or missed BeginBlock call.",
                                 certificate.height.as_u64(), state_guard.pending_block_height);
-                             // This is a serious issue. For now, we proceed but it needs investigation.
                         }
-
 
                         match state_guard.commit_block() {
                             Ok(_app_hash) => {
@@ -554,7 +505,6 @@ async fn app_message_loop(
 }
 
 fn msg_type_name<C: MalachiteAppChannelContext>(msg: &AppMsg<C>) -> &'static str {
-    // Corrected Trait bound
     match msg {
         AppMsg::ConsensusReady { .. } => "ConsensusReady",
         AppMsg::StartedRound { .. } => "StartedRound",
