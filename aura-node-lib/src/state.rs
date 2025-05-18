@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use aura_core::Transaction; // Just import what we're using
-use chrono; // For timestamp handling
+ // For timestamp handling
 use redb::{Database, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
