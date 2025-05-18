@@ -1,7 +1,7 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Subcommand, Debug)]
 pub enum WalletCommands {
@@ -40,8 +40,8 @@ pub enum WalletCommands {
 
 pub async fn handle_wallet_command(
     commands: WalletCommands,
-    app_config: &AuraAppConfig,
-    _config_path: &PathBuf,
+    _app_config: &AuraAppConfig,
+    _config_path: &Path,
 ) -> Result<()> {
     match commands {
         WalletCommands::Create { name } => {

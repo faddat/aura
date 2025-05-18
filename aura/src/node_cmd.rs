@@ -1,7 +1,7 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use std::path::PathBuf;
+use std::path::Path;
 
 #[derive(Subcommand, Debug)]
 pub enum NodeCommands {
@@ -21,13 +21,13 @@ pub enum NodeCommands {
 pub async fn handle_node_command(
     commands: NodeCommands,
     app_config: &AuraAppConfig,
-    _config_path: &PathBuf, // In case we need to reload or save specific parts
+    _config_path: &Path, // In case we need to reload or save specific parts
 ) -> Result<()> {
     match commands {
         NodeCommands::Start { seed_phrase } => {
             tracing::info!("Starting Aura node...");
             tracing::debug!("Node configuration: {:?}", app_config.node);
-            if let Some(ref sp) = seed_phrase {
+            if let Some(ref _sp) = seed_phrase {
                 tracing::info!("Using provided seed phrase for node identity.");
                 // Here you would pass the seed phrase and app_config.node to aura_node_lib
                 // e.g., aura_node_lib::start_node(app_config.node.clone(), Some(sp.clone())).await?;

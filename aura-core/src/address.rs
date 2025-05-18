@@ -1,60 +1,61 @@
 use crate::AURA_ADDR_HRP;
 use crate::error::CoreError;
-use bech32::{self, FromBase32, ToBase32, Variant};
+use bech32::{self, Bech32m, Hrp};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-const ADDRESS_PAYLOAD_LENGTH: usize = 33; // Example: 32 bytes for compressed pubkey + 1 type byte
+pub const AURA_ADDRESS_PAYLOAD_LENGTH: usize = 48; // For BLS12-381 G1 compressed
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AuraAddress {
-    hrp: String,
-    payload: Vec<u8>, // Typically the raw public key bytes (e.g., compressed secp256k1 or BLS12-381)
+    hrp_str: String,
+    payload: Vec<u8>, // 8-bit data
 }
 
 impl AuraAddress {
-    pub fn new(hrp: &str, payload: Vec<u8>) -> Result<Self, CoreError> {
-        // Basic validation, e.g. payload length
-        if payload.len() != ADDRESS_PAYLOAD_LENGTH { // Adjust as needed
-            // return Err(CoreError::InvalidAddress(format!("Invalid payload length: {}", payload.len())));
-            // For now, let's be flexible for early dev. Production should be strict.
+    pub fn new(hrp_str: &str, payload: Vec<u8>) -> Result<Self, CoreError> {
+        if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
+            return Err(CoreError::InvalidAddress(format!(
+                "Invalid payload length: expected {}, got {}",
+                AURA_ADDRESS_PAYLOAD_LENGTH,
+                payload.len()
+            )));
         }
+        Hrp::parse_unchecked(hrp_str); // Will panic on invalid HRP chars for parse_unchecked. Use Hrp::parse for Result.
+        // Hrp::parse(hrp_str).map_err(CoreError::from)?;
         Ok(AuraAddress {
-            hrp: hrp.to_string(),
+            hrp_str: hrp_str.to_string(),
             payload,
         })
     }
 
-    pub fn from_pubkey_bytes(pubkey_bytes: &[u8], hrp: &str) -> Result<Self, CoreError> {
-        // Here, pubkey_bytes would be the compressed form of an elliptic curve point.
-        // We might add a version/type byte if needed in the future.
-        // For now, let's assume pubkey_bytes is directly the payload.
-        // This needs to match how PublicKey::to_address serializes it.
-        // If PublicKey::to_address creates a 33-byte array (e.g. from ark-serialize compressed), then this is fine.
-        Self::new(hrp, pubkey_bytes.to_vec())
+    pub fn from_pubkey_bytes(pubkey_bytes: &[u8], hrp_str: &str) -> Result<Self, CoreError> {
+        Self::new(hrp_str, pubkey_bytes.to_vec())
     }
 
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
-    pub fn hrp(&self) -> &str {
-        &self.hrp
+    pub fn hrp_str(&self) -> &str {
+        &self.hrp_str
     }
 }
 
 impl fmt::Display for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let encoded = bech32::encode(&self.hrp, self.payload.to_base32(), Variant::Bech32m)
-            .map_err(|_| fmt::Error)?; // Convert bech32 error to fmt::Error
-        write!(f, "{}", encoded)
+        let hrp = Hrp::parse_unchecked(&self.hrp_str); // Assumes valid by construction in Self::new
+        match bech32::encode::<Bech32m>(hrp, &self.payload) {
+            Ok(encoded) => write!(f, "{}", encoded),
+            Err(_e) => Err(fmt::Error),
+        }
     }
 }
 
 impl fmt::Debug for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuraAddress({})", self.to_string())
+        write!(f, "AuraAddress({})", self)
     }
 }
 
@@ -62,23 +63,28 @@ impl FromStr for AuraAddress {
     type Err = CoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (hrp, data, variant) = bech32::decode(s)?;
-        if variant != Variant::Bech32m {
-            // Or Bech32 if that's chosen
-            return Err(CoreError::InvalidAddress(
-                "Invalid bech32 variant".to_string(),
-            ));
+        let (hrp_decoded, data_bytes) =
+            bech32::decode(s).map_err(|e| CoreError::Bech32(format!("Decode error: {}", e)))?;
+
+        let hrp_str = hrp_decoded.as_str().to_string();
+
+        if hrp_str != AURA_ADDR_HRP {
+            return Err(CoreError::InvalidAddress("Invalid HRP".to_string()));
         }
-        if hrp != AURA_ADDR_HRP {
-            // return Err(CoreError::InvalidAddress(format!("Invalid HRP: expected {}, got {}", AURA_ADDR_HRP, hrp)));
-            // Be flexible for now if other HRPs are part of genesis for non-native assets.
+
+        let payload = data_bytes;
+
+        if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
+            return Err(CoreError::InvalidAddress(format!(
+                "Invalid payload length after decoding: expected {}, got {}",
+                AURA_ADDRESS_PAYLOAD_LENGTH,
+                payload.len()
+            )));
         }
-        let payload = Vec::<u8>::from_base32(&data)?;
-        Ok(AuraAddress { hrp, payload })
+        Ok(AuraAddress { hrp_str, payload })
     }
 }
 
-// Implement Serialize and Deserialize to use the String representation
 impl Serialize for AuraAddress {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

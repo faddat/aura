@@ -1,37 +1,39 @@
-use crate::{AuraAddress, CoreError, CurveFr, CurveG1}; // Assuming AuraAddress
-use ark_ff::PrimeField; // For from_le_bytes_mod_order
+use crate::{AuraAddress, CoreError, CurveFr};
+use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use sha2::{Digest, Sha256}; // Or a ZKP-friendly hash like Poseidon
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-// --- Note ---
+// TODO: IMPLEMENTATION WARNING
+// This codebase uses the sha2 hash function for commitments instead of the Poseidon hash
+// which would be more ZKP-friendly. To use Poseidon properly, you need to:
+// 1. Initialize matrices properly for PoseidonConfig
+// 2. Implement hashing in zkp.rs using PoseidonSponge
+// 3. Add proper implementations of PoseidonSpongeVar for circuit constraints
+//
+// The current implementation is a placeholder for development. In a production
+// environment, you should implement proper ZK-friendly primitives.
+
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Note {
-    pub value: u64,             // Amount of uaura
-    pub owner_pk_info: Vec<u8>, // Public key bytes of the owner, or diversified address components
-    pub randomness: CurveFr,    // rho, for unique commitment
-                                // pub memo: Option<[u8; 512]>, // Optional encrypted memo
+    pub value: u64,
+    pub owner_pk_info: Vec<u8>,
+    pub randomness: CurveFr,
 }
 
 impl Note {
     pub fn new(value: u64, owner_address: &AuraAddress, randomness: CurveFr) -> Self {
         Note {
             value,
-            owner_pk_info: owner_address.payload().to_vec(), // Simplified: using raw address payload
+            owner_pk_info: owner_address.payload().to_vec(),
             randomness,
         }
     }
 
-    pub fn commitment(&self) -> Result<NoteCommitment, CoreError> {
-        // This needs to be a ZKP-friendly hash (e.g., Poseidon) or a Pedersen hash.
-        // For "crazy simple" placeholder, we use SHA256, but this MUST be replaced.
-        // The actual commitment scheme depends heavily on the ZKP circuit.
-        // E.g., Commit(value, owner_pk_info_hash, randomness)
-
-        let mut hasher = Sha256::new(); // Placeholder - REPLACE WITH ZKP-FRIENDLY HASH
+    pub fn commitment_outside_circuit(&self) -> Result<NoteCommitment, CoreError> {
+        let mut hasher = Sha256::new();
         hasher.update(self.value.to_le_bytes());
-
-        let mut owner_bytes = Vec::new();
-        // self.owner_pk_info.serialize_compressed(&mut owner_bytes).map_err(|e| CoreError::Serialization(e.to_string()))?;
         hasher.update(&self.owner_pk_info);
 
         let mut randomness_bytes = Vec::new();
@@ -45,9 +47,19 @@ impl Note {
     }
 }
 
-// --- Note Commitment ---
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize)]
-pub struct NoteCommitment(pub [u8; 32]); // Output of the commitment function
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct NoteCommitment(pub [u8; 32]);
 
 impl NoteCommitment {
     pub fn to_bytes(&self) -> [u8; 32] {
@@ -55,22 +67,26 @@ impl NoteCommitment {
     }
 }
 
-// --- Nullifier ---
-// nf = Hash(note_commitment, sk, position_in_merkle_tree_or_rho)
-// For privacy, usually nf = Hash(rho, sk) or nf = Hash(note_secret, sk) where note_secret is derived from rho.
-// Or, more commonly in Zcash-like systems, nf = CRH(rho, sk_spend, cm_pos), where cm_pos is the position.
-// For simplicity here, let's do Hash(rho, sk_bytes). The ZKP must enforce this.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    CanonicalSerialize,
+    CanonicalDeserialize,
+    Serialize,
+    Deserialize,
+)]
 pub struct Nullifier(pub [u8; 32]);
 
 impl Nullifier {
-    pub fn new(
+    pub fn new_outside_circuit(
         note_randomness: &CurveFr,
         spending_key_scalar: &CurveFr,
     ) -> Result<Self, CoreError> {
-        // This needs to be a ZKP-friendly hash (e.g., Poseidon) or a Pedersen hash.
-        // For "crazy simple" placeholder, we use SHA256, but this MUST be replaced.
-        let mut hasher = Sha256::new(); // Placeholder - REPLACE WITH ZKP-FRIENDLY HASH
+        let mut hasher = Sha256::new();
 
         let mut randomness_bytes = Vec::new();
         note_randomness
@@ -87,6 +103,7 @@ impl Nullifier {
         let hash_result = hasher.finalize();
         Ok(Nullifier(hash_result.into()))
     }
+
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
     }

@@ -1,52 +1,91 @@
 [package]
 name = "aura-core"
 version = "0.1.0"
-edition = "2024"
+edition = "2024"   # Using Rust 2024 edition
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
+ark-serialize-derive = { version = "0.5.0", optional = true }
+serde = { version = "1.0", features = ["derive", "serde_derive"] }
 serde_json = "1.0"
 hex = "0.4"
 thiserror = "2.0.12"
+bech32 = "0.11.0"                                                  # Current stable is ~1.0.58
 anyhow = "1.0"
-rand = "0.9.1" # For generating randomness
-zeroize = { version = "1.6", features = [
-    "zeroize_derive",
-] } # For securely clearing sensitive data
+# The rand/rand_core ecosystem can be complex with version compatibility
+# Use versions known to work with ark 0.5.0 
+rand = "0.8.5"                                                 # Downgrade to a version known to work with ark 0.5.0
+rand_core = "0.6.4"                                            # Corresponding rand_core version
+getrandom = "0.2.8"                                            # Ensure compatible getrandom version
+zeroize = { version = "1.8.1", features = ["zeroize_derive"] } # Latest stable
 
 # Hashing
-sha2 = "0.10"
-blake2 = "0.10"
+sha2 = "0.10.8"
+blake2 = "0.10.6"
 
-# Address encoding
-bech32 = "0.11.0"
 
 # Seed phrases and key derivation
-bip39 = "2.0"
-# For SLIP-0010 or BIP32-like derivation (optional for initial simplicity)
-# hdpath = "0.5" # Example, or use direct slip10 crates
+bip39 = "2.1.0"
 
-# Arkworks ZKP Suite (using BLS12-381 as an example curve)
-ark-ff = { version = "0.5.0" }
-ark-ec = { version = "0.5.0" }
+# Arkworks ZKP Suite (Targeting 0.5.0 line)
+# Ensure these versions are actually released and compatible on crates.io
+ark-ff = { version = "0.5.0", default-features = false, features = [
+    "std",
+    "asm",
+] }
+ark-ec = { version = "0.5.0", default-features = false, features = ["std"] }
 ark-bls12-381 = { version = "0.5.0", default-features = false, features = [
     "curve",
+    "std",
+] } # Assumes bls12-381 is also 0.5.0
+ark-relations = { version = "0.5.0", default-features = false, features = [
+    "std",
 ] }
-ark-relations = { version = "0.5.0", default-features = false } # For R1CS
-ark-r1cs-std = { version = "0.5.0", default-features = false } # For building circuits with std lib components
-ark-crypto-primitives = { version = "0.5.0", features = [
-    "sponge",
+ark-r1cs-std = { version = "0.5.0", default-features = false, features = [
+    "std",
+] }
+ark-crypto-primitives = { version = "0.5.0", default-features = false, features = [
+    "std",
     "crh",
-] } # For Poseidon, etc.
+    "sponge",
+    "merkle_tree",
+    "encryption",
+] } # Added "encryption" just in case
 ark-groth16 = { version = "0.5.0", default-features = false, features = [
     "r1cs",
-] } # Example proving system
-# Or ark-marlin, ark-plonk etc.
+    "std",
+] }
+ark-snark = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false, features = [
+    "derive",
+    "std",
+] }
+ark-std = { version = "0.5.0", default-features = false, features = [
+    "std",
+    "parallel",
+] }
 
-# For ZKP parameter generation (if done in code, often done offline)
-# ark-snark = { version = "0.4.0" }
+# Tracing for logging (optional)
+tracing = { version = "0.1", optional = true }
+
+# These seem less like core crypto lib dependencies and more app/CLI level.
+# If aura-core doesn't directly use them, move to aura/Cargo.toml.
+# toml = "0.8.12"
+# shellexpand = "3.1.0"
 
 [features]
-default = []
-# Add a "mock-zkp" feature for easier testing without full ZKP overhead
+default = ["std", "mock-zkp"]
+std = [
+    "ark-ff/std",
+    "ark-ec/std",
+    "ark-bls12-381/std",
+    "ark-relations/std",
+    "ark-r1cs-std/std",
+    "ark-crypto-primitives/std",
+    "ark-groth16/std",
+    "ark-serialize/std",
+    "ark-std/std",
+    "dep:tracing",               # Enable tracing when std is enabled
+]
 mock-zkp = []
+parallel = ["ark-std/parallel"]
+tracing = ["dep:tracing"] # Add explicit tracing feature
