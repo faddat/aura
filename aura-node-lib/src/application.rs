@@ -270,17 +270,19 @@ impl MalachiteAppService for AuraApplication {
                 // Convert your app's validator updates to Malachite's ValidatorUpdate type
                 let malachite_validator_updates = validator_updates_app
                     .into_iter()
-                    .map(|app_update| informalsystems_malachitebft_core_types::validator::ValidatorUpdate {
-                        // This assumes your state::ValidatorUpdate fields map directly
-                        // You might need to convert pub_key format if different (e.g. from raw bytes to crypto::PublicKey)
-                        // For now, let's assume direct mapping is not possible without more info on Malachite's key type.
-                        // Placeholder:
-                        pub_key: informalsystems_malachitebft_core_types::crypto::PublicKey::from_raw_ed25519(
-                            &app_update.pub_key,
-                        )
-                        .unwrap_or_else(|| panic!("Invalid pubkey bytes for ValidatorUpdate")),
-                        power: app_update.power,
-                    })
+                    .map(
+                        |app_update| malachitebft_core_types::validator::ValidatorUpdate {
+                            // This assumes your state::ValidatorUpdate fields map directly
+                            // You might need to convert pub_key format if different (e.g. from raw bytes to crypto::PublicKey)
+                            // For now, let's assume direct mapping is not possible without more info on Malachite's key type.
+                            // Placeholder:
+                            pub_key: malachitebft_core_types::crypto::PublicKey::from_raw_ed25519(
+                                &app_update.pub_key,
+                            )
+                            .unwrap_or_else(|| panic!("Invalid pubkey bytes for ValidatorUpdate")),
+                            power: app_update.power,
+                        },
+                    )
                     .collect();
 
                 Response::new(BlockEndResponse {
