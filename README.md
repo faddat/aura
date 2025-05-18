@@ -23,7 +23,6 @@ For the love of god don't use this right now.  It is:
 
 But if you want to contribute, I'd love it!
 
-
 ## Chain State
 
 Unless we choose another path, we'll be using the bech32 side (cosmos side) of "unicornandmemes.com".
