@@ -1,13 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use malachitebft_app::{ApplicationService, NodeId};
-use malachitebft_core_types::{
-    block::{Block, BlockId},
-    consensus::{Height, Round},
-    crypto::Signature,
+use tracing::info;
+
+// Import directly from the packages to avoid issues
+use informalsystems_malachitebft_app::ApplicationService;
+use informalsystems_malachitebft_app::PeerId as NodeId;
+use informalsystems_malachitebft_core_types::{
+    Height, Round, Signature, Value as Block, ValueId as BlockId,
 };
-use tracing::{info, warn};
 
 use crate::{Error, Result, state::AuraState};
 
@@ -40,11 +41,7 @@ impl ApplicationService for AuraApplication {
 
     /// Check block is valid for current application state
     async fn check_block(&self, block: &Block) -> Result<()> {
-        info!(
-            "Checking block {:?} at height {}",
-            block.id(),
-            block.header.height
-        );
+        info!("Checking block {:?} at height {}", block.id(), block.height);
 
         // Implement block validation logic here
         // For example:
@@ -57,11 +54,7 @@ impl ApplicationService for AuraApplication {
 
     /// Apply a committed block to the application state
     async fn apply_block(&self, block: Block) -> Result<()> {
-        info!(
-            "Applying block {:?} at height {}",
-            block.id(),
-            block.header.height
-        );
+        info!("Applying block {:?} at height {}", block.id(), block.height);
 
         let mut state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
 

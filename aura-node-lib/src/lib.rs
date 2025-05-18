@@ -2,11 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use aura_core::CoreError;
 
-// Explicitly import the crates with the renamed dependencies
-extern crate malachitebft_app;
-extern crate malachitebft_config;
-extern crate malachitebft_core_types;
-extern crate malachitebft_engine;
+// Re-export Malachite types for use in our crate
+pub use malachitebft_app as mbt_app;
+pub use malachitebft_config as mbt_config;
+pub use malachitebft_core_consensus as mbt_consensus;
+pub use malachitebft_core_types as mbt_core_types;
+pub use malachitebft_engine as mbt_engine;
+pub use malachitebft_peer as mbt_peer;
 
 mod application;
 mod config;
@@ -57,12 +59,15 @@ pub enum Error {
 
 /// Re-export important Malachite types for convenience
 pub mod types {
-    pub use malachitebft_app::NodeId;
-    pub use malachitebft_core_types::{
-        block::Block,
-        consensus::{BlockHeader, Height, Round, Vote},
-        crypto::Signature,
-    };
+    // Import from app::types
+    pub use crate::mbt_app::types::PeerId as NodeId;
+
+    // Import from core_types
+    pub use crate::mbt_core_types::height::Height;
+    pub use crate::mbt_core_types::round::Round;
+    pub use crate::mbt_core_types::signing::Signature;
+    pub use crate::mbt_core_types::value::Value as Block;
+    pub use crate::mbt_core_types::vote::Vote;
 }
 
 fn main() {
