@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, path::Path, sync::Arc};
+use std::{cmp::Ordering, collections::VecDeque, path::Path, sync::Arc};
 
-use crate::malachitebft_core_types::Round;
+use crate::malachitebft_core_types::{Round, Value as MalachiteValue};
 use aura_core::Transaction;
 use redb::{Database, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,37 @@ pub struct AuraState {
     mempool: VecDeque<Transaction>,
 }
 
+// Manually implement the required traits using current_height for comparison
+impl PartialEq for AuraState {
+    fn eq(&self, other: &Self) -> bool {
+        self.current_height == other.current_height
+    }
+}
+
+impl Eq for AuraState {}
+
+impl PartialOrd for AuraState {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AuraState {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.current_height.cmp(&other.current_height)
+    }
+}
+
 const GENESIS_APP_HASH_PLACEHOLDER: &[u8] = b"genesis_app_hash_placeholder_for_height_0";
+
+// Implement Value trait for AuraState
+impl MalachiteValue for AuraState {
+    type Id = u64;
+
+    fn id(&self) -> Self::Id {
+        self.current_height
+    }
+}
 
 impl AuraState {
     pub fn new(
@@ -309,5 +339,19 @@ impl AuraState {
             tx_table.insert(tx_id_bytes.as_ref(), tx_bytes.as_slice())?;
         }
         Ok(())
+    }
+}
+
+// We need a clone implementation that clones the fields that can be cloned
+// and creates a new instance of the database
+impl Clone for AuraState {
+    fn clone(&self) -> Self {
+        // This is a placeholder implementation - in practice you'd need to
+        // properly handle cloning the database which may involve creating a new one
+        // or using a connection pool.
+        // For now, we'll panic with a clear message
+        panic!(
+            "Cloning AuraState is not fully supported due to the embedded database. This indicates an unexpected usage pattern."
+        )
     }
 }

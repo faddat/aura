@@ -11,24 +11,34 @@ use crate::Result as AuraLibResult;
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
 
-// --- Malachite App Channel Imports ---
-use malachitebft_app_channel::{
-    AppMsg, Channels, ConsensusMsg, EngineHandle, RxEvent, TxEvent,
-    app::{
-        Context as MalachiteAppChannelContext, Node as MalachiteAppChannelNode,
-        NodeHandle as MalachiteAppChannelNodeHandle,
-        types::{Round, core::Validator as MalachiteValidatorTrait},
+// --- Malachite App Imports ---
+use malachitebft_app::{
+    AppService,
+    events::{RxEvent, TxEvent},
+    node::NodeConfig,
+    node::{EngineHandle, Node as MalachiteAppNode, NodeHandle as MalachiteAppNodeHandle},
+    streaming::StreamContent,
+    types::{
+        LocallyProposedValue,
+        sync::{AppMsg, Channels, ConsensusMsg},
     },
-    start_engine as malachite_start_engine,
 };
-
-// --- Malachite Config ---
-use malachitebft_config::Config as MalachiteBftConfig;
 
 // --- Malachite Core Types ---
 use malachitebft_core_types::{
-    NilOrVal, NodeKey, Round as MalachiteRound, ValueId, crypto::PublicKey,
+    Context, NilOrVal, Round, Round as MalachiteRound, ValueId,
+    crypto::{Ed25519, NodeKey, PublicKey},
 };
+
+// Also import the validator trait directly from the test crate
+use malachitebft_test::types::core::Validator as MalachiteValidatorTrait;
+
+// --- Malachite Engine ---
+use malachitebft_app_channel::run::start_engine as malachite_start_engine;
+
+// --- Malachite Config ---
+use malachitebft_config::Config as MalachiteBftConfig;
+use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
@@ -38,6 +48,9 @@ use malachitebft_test::{
     PublicKey as TestPublicKey, Validator as TestValidator, ValidatorSet as TestValidatorSet,
     Value as TestValue, Vote as TestVote, codec::proto::ProtobufCodec,
 };
+
+// App Context trait for msg_type_name
+use malachitebft_app_channel::AppContext;
 
 // --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -58,105 +71,21 @@ impl MalachiteTopLevelConfig {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct AuraMalachiteContext(TestContext);
-
-impl Default for AuraMalachiteContext {
-    fn default() -> Self {
-        Self(TestContext::default())
-    }
-}
-
-impl MalachiteAppChannelContext for AuraMalachiteContext {
-    type Address = TestAddress;
-    type Height = TestHeight;
-    type ProposalPart = TestProposalPart;
-    type Proposal = TestProposal;
-    type Validator = TestValidator;
-    type ValidatorSet = TestValidatorSet;
-    type Value = AuraState;
-    type Vote = TestVote;
-    type Extension = TestExtension;
-    type SigningScheme = Ed25519Provider;
-
-    fn select_proposer<'a>(
-        &self,
-        validator_set: &'a Self::ValidatorSet,
-        height: Self::Height,
-        round: Round,
-    ) -> &'a Self::Validator {
-        self.0.select_proposer(validator_set, height, round)
+impl NodeConfig for MalachiteTopLevelConfig {
+    fn moniker(&self) -> &str {
+        &self.moniker
     }
 
-    fn new_proposal(
-        height: Self::Height,
-        round: Round,
-        value: Self::Value,
-        pol_round: Round,
-        address: Self::Address,
-    ) -> Self::Proposal {
-        warn!("AuraMalachiteContext::new_proposal is using Aura block height");
-        TestProposal::new(
-            height,
-            round,
-            pol_round,
-            TestValue::new(value.id()),
-            address,
-        )
+    fn consensus(&self) -> &ConsensusConfig {
+        &self.consensus
     }
 
-    fn new_prevote(
-        height: Self::Height,
-        round: Round,
-        value_id: NilOrVal<ValueId<Self>>,
-        address: Self::Address,
-    ) -> Self::Vote {
-        TestVote::new_prevote(height, round, value_id, address)
+    fn value_sync(&self) -> &ValueSyncConfig {
+        // Since we don't have a value_sync field, we need to return a default one
+        static DEFAULT_VALUE_SYNC: once_cell::sync::Lazy<ValueSyncConfig> =
+            once_cell::sync::Lazy::new(|| ValueSyncConfig::default());
+        &DEFAULT_VALUE_SYNC
     }
-
-    fn new_precommit(
-        height: Self::Height,
-        round: Round,
-        value_id: NilOrVal<ValueId<Self>>,
-        address: Self::Address,
-    ) -> Self::Vote {
-        TestVote::new_precommit(height, round, value_id, address)
-    }
-}
-
-impl MalachiteValidatorTrait<AuraMalachiteContext> for AuraState {
-    type Id = u64;
-    fn id(&self) -> Self::Id {
-        self.height
-    }
-
-    fn address(&self) -> <AuraMalachiteContext as MalachiteAppChannelContext>::Address {
-        TestAddress::new([0; 20]) // Default placeholder address
-    }
-
-    fn public_key(
-        &self,
-    ) -> <AuraMalachiteContext as MalachiteAppChannelContext>::SigningScheme::PublicKey {
-        Ed25519Provider::empty_public_key() // Use a placeholder public key
-    }
-
-    fn voting_power(&self) -> u64 {
-        1 // Default voting power
-    }
-}
-
-// Implement the core Context trait for AuraMalachiteContext
-impl informalsystems_malachitebft_core_types::Context for AuraMalachiteContext {
-    type Address = TestAddress;
-    type Height = TestHeight;
-    type ProposalPart = TestProposalPart;
-    type Proposal = TestProposal;
-    type Validator = TestValidator;
-    type ValidatorSet = TestValidatorSet;
-    type Value = AuraState;
-    type Vote = TestVote;
-    type Extension = TestExtension;
-    type SigningScheme = Ed25519Provider;
 }
 
 #[derive(Clone)]
@@ -169,13 +98,13 @@ pub struct AuraNode {
 
 pub struct AuraNodeRunningHandle {
     pub app_logic_handle: JoinHandle<()>,
-    pub engine_handle: EngineHandle<AuraMalachiteContext>,
-    pub tx_event: TxEvent<AuraMalachiteContext>,
+    pub engine_handle: EngineHandle,
+    pub tx_event: TxEvent<TestContext>,
 }
 
 #[async_trait]
-impl MalachiteAppChannelNodeHandle<AuraMalachiteContext> for AuraNodeRunningHandle {
-    fn subscribe(&self) -> RxEvent<AuraMalachiteContext> {
+impl MalachiteAppNodeHandle<TestContext> for AuraNodeRunningHandle {
+    fn subscribe(&self) -> RxEvent<TestContext> {
         self.tx_event.subscribe()
     }
     async fn kill(&self, _reason: Option<String>) -> eyre::Result<()> {
@@ -187,8 +116,8 @@ impl MalachiteAppChannelNodeHandle<AuraMalachiteContext> for AuraNodeRunningHand
 }
 
 #[async_trait]
-impl MalachiteAppChannelNode for AuraNode {
-    type Context = AuraMalachiteContext;
+impl MalachiteAppNode for AuraNode {
+    type Context = TestContext;
     type Config = MalachiteTopLevelConfig;
     type Genesis = TestGenesis;
     type PrivateKeyFile = TestPrivateKey;
@@ -251,7 +180,7 @@ impl MalachiteAppChannelNode for AuraNode {
             .map_err(|e| eyre!("Failed to parse genesis file {:?}: {}", genesis_path, e))
     }
 
-    async fn start(&self) -> eyre::Result<<Self as MalachiteAppChannelNode>::NodeHandle> {
+    async fn start(&self) -> eyre::Result<<Self as MalachiteAppNode>::NodeHandle> {
         info!("AuraNode (MalachiteNode impl) starting process...");
         let malachite_config = self.load_config()?;
 
@@ -261,7 +190,7 @@ impl MalachiteAppChannelNode for AuraNode {
         let priv_validator_key_file_content = self.load_private_key_file()?;
         let priv_validator_key = self.load_private_key(priv_validator_key_file_content);
 
-        let aura_malachite_ctx = AuraMalachiteContext(TestContext::default());
+        let aura_malachite_ctx = TestContext::default();
         let malachite_genesis = self.load_genesis()?;
         let initial_validator_set = malachite_genesis.validator_set.clone();
         info!(
@@ -340,8 +269,8 @@ impl MalachiteAppChannelNode for AuraNode {
 
 async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
-    _ctx: AuraMalachiteContext,
-    mut channels: Channels<AuraMalachiteContext>,
+    _ctx: TestContext,
+    mut channels: Channels<TestContext>,
 ) -> eyre::Result<()> {
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
@@ -374,7 +303,7 @@ async fn app_message_loop(
                     AppMsg::GetValue { height, round, reply, .. } => {
                         info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
 
-                        let new_aura_block = AuraState {
+                        let new_aura_block = crate::state::Block {
                             height: height.as_u64(),
                             proposer_address: "aura_node_self_proposing".to_string(),
                             timestamp: chrono::Utc::now().timestamp(),
@@ -478,7 +407,7 @@ async fn app_message_loop(
     Ok(())
 }
 
-fn msg_type_name<C: MalachiteAppChannelContext>(msg: &AppMsg<C>) -> &'static str {
+fn msg_type_name(msg: &AppMsg<TestContext>) -> &'static str {
     match msg {
         AppMsg::ConsensusReady { .. } => "ConsensusReady",
         AppMsg::StartedRound { .. } => "StartedRound",
