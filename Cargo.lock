@@ -522,6 +522,9 @@ name = "aura"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aura-core",
+ "aura-node-lib",
+ "aura-wallet-lib",
  "clap",
  "config 0.15.11",
  "serde",
@@ -582,7 +585,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sha256",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -4112,19 +4114,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "sha256"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f880fc8562bdeb709793f00eb42a2ad0e672c4f883bbe59122b926eca935c8f6"
-dependencies = [
- "async-trait",
- "bytes",
- "hex",
- "sha2",
- "tokio",
 ]
 
 [[package]]

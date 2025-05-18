@@ -1,223 +1,114 @@
-use std::{collections::VecDeque, path::Path, sync::Arc};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{error, info, warn};
 
-use aura_core::Transaction;
-use redb::{Database, TableDefinition};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tracing::{debug, info};
+use crate::Result;
+use crate::application::{AppService, AuraApplication};
+use crate::config::AuraNodeConfig;
+use crate::state::AuraState; // Uses AuraState from state.rs // Crate-local Result
 
-use crate::{Error, Result};
+const SIMULATION_BLOCK_INTERVAL_SECONDS: u64 = 5; // Produce a block every 5s in simulation
+const HEARTBEAT_INTERVAL_SECONDS: u64 = 10 * 60; // 10 minutes for heartbeat block
 
-// Simple Block structure for node-lib internal use, not tied to Malachite yet.
-// This will hold aura_core::Transaction objects.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Block {
-    pub height: u64,
-    pub round: u64,       // Simplified round
-    pub proposer: String, // NodeId as String for now
-    pub transactions: Vec<Transaction>, // Aura core transactions
-                          // pub prev_block_hash: [u8; 32], // Could add later
-                          // pub timestamp: u64,
+pub struct AuraNode {
+    app: Arc<AuraApplication>,
+    // config: AuraNodeConfig, // Store if needed for other operations
 }
 
-/// Table definitions for the state database
-const METADATA_TABLE: TableDefinition<&str, u64> = TableDefinition::new("metadata"); // For "current_height"
-#[allow(dead_code)]
-const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks"); // Key: height, Value: serialized Block
-#[allow(dead_code)]
-const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions"); // Key: tx_id, Value: serialized Transaction (optional, for indexing)
+impl AuraNode {
+    pub fn new(config: AuraNodeConfig, node_private_key: aura_core::PrivateKey) -> Result<Self> {
+        info!(
+            "Initializing AuraNode with ID: {}, DB Path: {:?}",
+            config.node_id, config.db_path
+        );
 
-/// Represents the application state for the Aura blockchain
-#[derive(Debug)]
-pub struct AuraState {
-    #[allow(dead_code)]
-    db: Database,
-    current_height: u64,
-    #[allow(dead_code)] // Will be used for actual signing later
-    private_key: Arc<aura_core::PrivateKey>,
-    // Simple in-memory mempool
-    #[allow(dead_code)]
-    mempool: VecDeque<Transaction>,
-}
+        let aura_state = AuraState::new(&config.db_path, Arc::new(node_private_key))?;
+        let app_state_arc = Arc::new(Mutex::new(aura_state));
+        let aura_application = AuraApplication::new(app_state_arc, config.node_id.clone());
 
-impl AuraState {
-    #[allow(dead_code)]
-    pub fn new(db_path: impl AsRef<Path>, private_key: Arc<aura_core::PrivateKey>) -> Result<Self> {
-        let db = Database::create(db_path)?;
-        let current_height = Self::get_or_init_height(&db)?;
-        info!("AuraState initialized. Current height: {}", current_height);
-        Ok(Self {
-            db,
-            current_height,
-            private_key,
-            mempool: VecDeque::new(),
+        Ok(AuraNode {
+            app: Arc::new(aura_application),
+            // config,
         })
     }
 
-    #[allow(dead_code)]
-    pub fn height_value(&self) -> u64 {
-        self.current_height
-    }
+    pub async fn start_simulation_loop(self: Arc<Self>) -> Result<()> {
+        info!("Starting single-node simulation loop...");
+        let mut current_round: u64 = 0; // Simplified round for logging
 
-    // Method to add a transaction to the mempool (e.g., from RPC)
-    #[allow(dead_code)]
-    pub fn add_transaction_to_mempool(&mut self, tx: Transaction) -> Result<()> {
-        // Basic validation could happen here before adding to mempool
-        info!("Adding transaction {:?} to mempool", tx.id()?);
-        self.mempool.push_back(tx);
-        Ok(())
-    }
+        // For heartbeat block timing
+        let mut last_block_time = tokio::time::Instant::now();
 
-    #[allow(dead_code)]
-    fn get_transactions_for_block(&mut self, max_txs: usize) -> Vec<Transaction> {
-        let mut txs = Vec::new();
-        for _ in 0..max_txs {
-            if let Some(tx) = self.mempool.pop_front() {
-                txs.push(tx);
-            } else {
-                break;
-            }
-        }
-        txs
-    }
-
-    #[allow(dead_code)]
-    pub fn apply_block(&mut self, block: Block) -> Result<()> {
-        debug!("Attempting to apply block at height {}", block.height);
-
-        if block.height != self.current_height + 1 {
-            return Err(Error::State(format!(
-                "Block height {} is not next in sequence after current height {}",
-                block.height, self.current_height
-            )));
-        }
-
-        let write_txn = self.db.begin_write()?;
-        {
-            // Scope for mutable borrow of write_txn
-            // Process transactions
-            for tx in &block.transactions {
-                info!("Processing tx {:?} in block {}", tx.id()?, block.height);
-                // 1. (Mock ZKP) Verify proof - In a real scenario, ZkpHandler is used.
-                //    aura_core::zkp::ZkpHandler::verify_proof(...) -> Ok(true) for mock
-                // 2. Check nullifiers (mock for now)
-                for nullifier in &tx.spent_nullifiers {
-                    debug!("Checking nullifier {:?} (mock)", nullifier.to_bytes());
-                    // TODO: Check against a redb nullifier set table
+        loop {
+            let current_height = match self.app.current_height().await {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Simulation: Failed to get current height: {:?}", e);
+                    sleep(Duration::from_secs(10)).await; // Wait before retrying
+                    continue;
                 }
-                // 3. Add new note commitments (mock for now)
-                for commitment in &tx.new_note_commitments {
-                    debug!("Adding note commitment {:?} (mock)", commitment.to_bytes());
-                    // TODO: Add to a redb note commitment table/Merkle tree
-                }
-                // 4. (Optional) Store transaction by ID for indexing
-                let mut tx_table = write_txn.open_table(TRANSACTIONS_TABLE)?;
-                let tx_id_bytes = tx.id()?;
-                let tx_bytes = serde_json::to_vec(tx)
-                    .map_err(|e| Error::State(format!("Failed to serialize tx: {}", e)))?;
-                tx_table.insert(tx_id_bytes.as_ref(), tx_bytes.as_slice())?; // Store serialized tx
-            }
+            };
+            let next_height = current_height + 1;
 
-            // Store the block
-            let mut blocks_table = write_txn.open_table(BLOCKS_TABLE)?;
-            let block_bytes = serde_json::to_vec(&block)
-                .map_err(|e| Error::State(format!("Failed to serialize block: {}", e)))?;
-            blocks_table.insert(&block.height, block_bytes.as_slice())?;
+            // Determine if it's time for a heartbeat block or regular block
+            let propose_reason =
+                if last_block_time.elapsed().as_secs() >= HEARTBEAT_INTERVAL_SECONDS {
+                    "heartbeat"
+                } else {
+                    // In a real system, we'd check for transactions.
+                    // For simulation, we just proceed unless it's a heartbeat.
+                    // The current `propose_block` will create empty blocks if mempool is empty.
+                    "regular (or empty if no txs)"
+                };
 
-            // Update current height
-            let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
-            metadata_table.insert("current_height", &block.height)?;
-        } // write_txn borrow ends
+            info!(
+                "Simulation: Attempting to propose {} block for height: {}, round: {}",
+                propose_reason, next_height, current_round
+            );
 
-        write_txn.commit()?;
+            match self.app.propose_block(next_height, current_round).await {
+                Ok(block_proposal) => {
+                    info!(
+                        "Simulation: Proposed block successfully for height: {}. Transactions: {}",
+                        block_proposal.height,
+                        block_proposal.transactions.len()
+                    );
 
-        self.current_height = block.height;
-        info!(
-            "Successfully applied block at height {}. New current height: {}",
-            block.height, self.current_height
-        );
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn create_block_proposal(
-        &mut self, // Changed to &mut to allow taking transactions from mempool
-        height: u64,
-        round: u64,
-        node_id: String,
-    ) -> Result<Block> {
-        let transactions = self.get_transactions_for_block(10); // Take up to 10 txs
-        info!(
-            "Creating block proposal for height {} with {} transactions.",
-            height,
-            transactions.len()
-        );
-
-        let block = Block {
-            height,
-            round,
-            proposer: node_id,
-            transactions,
-        };
-        Ok(block)
-    }
-
-    fn get_or_init_height(db: &Database) -> Result<u64> {
-        let read_txn = db.begin_read()?;
-
-        // Try to read the height
-        match read_txn.open_table(METADATA_TABLE) {
-            Ok(table) => {
-                match table.get("current_height")? {
-                    Some(height_guard) => {
-                        let height_value = height_guard.value();
-                        Ok(height_value)
-                    }
-                    None => {
-                        // Height key exists but no value, initialize to 0
-                        drop(read_txn);
-                        let write_txn = db.begin_write()?;
-                        {
-                            let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
-                            metadata_table.insert("current_height", &0u64)?;
+                    match self.app.apply_block(block_proposal).await {
+                        Ok(_) => {
+                            info!(
+                                "Simulation: Successfully applied block for height: {}",
+                                next_height
+                            );
+                            last_block_time = tokio::time::Instant::now(); // Reset heartbeat timer
                         }
-                        write_txn.commit()?;
-                        Ok(0)
+                        Err(e) => {
+                            error!(
+                                "Simulation: Failed to apply block for height {}: {:?}",
+                                next_height, e
+                            );
+                            // For simulation, log and continue. In a real system, this might be fatal.
+                        }
                     }
                 }
-            }
-            Err(_) => {
-                // Table doesn't exist, create it and set height to 0
-                drop(read_txn);
-                let write_txn = db.begin_write()?;
-                {
-                    // In newer redb versions, tables are created automatically when opened
-                    let mut metadata_table = write_txn.open_table(METADATA_TABLE)?;
-                    metadata_table.insert("current_height", &0u64)?;
+                Err(e) => {
+                    error!(
+                        "Simulation: Failed to propose block for height {}: {:?}",
+                        next_height, e
+                    );
+                    // This could happen due to state lock contention or other issues.
                 }
-                write_txn.commit()?;
-                Ok(0)
             }
+
+            current_round = current_round.wrapping_add(1);
+
+            // Wait for the next block interval
+            sleep(Duration::from_secs(SIMULATION_BLOCK_INTERVAL_SECONDS)).await;
         }
-    }
-
-    // Placeholder for app_hash calculation if needed by Malachite
-    #[allow(dead_code)]
-    pub fn app_hash(&self) -> Result<Vec<u8>> {
-        // For now, just hash the current height as a placeholder
-        let mut hasher = Sha256::new();
-        hasher.update(self.current_height.to_le_bytes());
-        Ok(hasher.finalize().to_vec())
-    }
-
-    // Placeholder for committing state and getting app hash
-    #[allow(dead_code)]
-    pub fn commit_and_get_app_hash(&mut self) -> Result<Vec<u8>> {
-        // redb commits transactions atomically. If self.db.begin_write() and .commit()
-        // are used in apply_block, the commit is already handled there.
-        // This function might just calculate and return the app_hash based on persisted state.
-        self.app_hash()
+        // Loop is infinite, Ok(()) is not typically reached unless a shutdown mechanism is added.
+        // For now, if it exits, it's an error path or unexpected.
+        // warn!("Simulation loop unexpectedly exited.");
+        // Ok(())
     }
 }
-
-// No demo function needed as we're using a different approach to avoid dead code warnings

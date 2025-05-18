@@ -20,8 +20,6 @@ libp2p = { version = "0.55.0", default-features = false, features = [
     "tokio",
 ] } # Example: minimal set for identity types
 
-sha256 = "1.6.0"
-
 # State Storage
 redb = "2.1.0" # Or latest stable version
 
@@ -29,17 +27,18 @@ redb = "2.1.0" # Or latest stable version
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",
-    "sync",
-] } # sync for Mutex etc.
+    "sync",            # for Mutex etc.
+    "time",            # for sleep in simulation loop
+] }
 async-trait = "0.1.77" # Malachite's app trait might be async
 
 # Utilities
 anyhow = "1.0"
-thiserror = "2.0.12"                               # Matching aura-core
+thiserror = "2.0.12"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sha2 = "0.10.9"
+sha2 = "0.10.9"                                    # Using sha2, removed separate sha256
 
 # RPC (Example: jsonrpsee, choose one)
 # jsonrpsee = { version = "0.22", features = ["full"] , optional = true }
