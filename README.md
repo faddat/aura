@@ -25,7 +25,7 @@ But if you want to contribute, I'd love it!
 
 ## Approximate Layout
 
-```toml
+```txt
 ├── Cargo.toml (workspace definition)
 ├── aura
 │   ├── Cargo.toml
