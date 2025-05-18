@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 // Use the aliased package names as in Cargo.toml
-use malachitebft_app::{
+use malachitebft_app_channel::app::{
     AppService as MalachiteAppService,
     types::sync::{Request, Response},
 };
