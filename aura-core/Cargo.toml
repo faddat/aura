@@ -23,6 +23,8 @@ bech32 = "0.11.0"
 
 # Seed phrases and key derivation
 bip39 = "2.0"
+toml = "0.8.22"
+shellexpand = "3.1.1"
 # For SLIP-0010 or BIP32-like derivation (optional for initial simplicity)
 # hdpath = "0.5" # Example, or use direct slip10 crates
 
