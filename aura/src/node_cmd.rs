@@ -1,7 +1,8 @@
 use crate::config::AuraAppConfig;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use std::path::Path;
+use std::sync::Arc; // Required for Arc::new
 
 #[derive(Subcommand, Debug)]
 pub enum NodeCommands {
@@ -10,9 +11,6 @@ pub enum NodeCommands {
         /// Seed phrase for the node's identity (especially if it's a validator)
         #[clap(long, env = "AURA_NODE_SEED_PHRASE")]
         seed_phrase: Option<String>,
-        // Add other node-specific overrides here if needed, e.g.
-        // #[clap(long)]
-        // p2p_listen_address_override: Option<String>,
     },
     /// Show node status (to be implemented)
     Status,
@@ -26,29 +24,81 @@ pub async fn handle_node_command(
     match commands {
         NodeCommands::Start { seed_phrase } => {
             tracing::info!("Starting Aura node...");
-            tracing::debug!("Node configuration: {:?}", app_config.node);
-            if let Some(ref _sp) = seed_phrase {
-                tracing::info!("Using provided seed phrase for node identity.");
-                // Here you would pass the seed phrase and app_config.node to aura_node_lib
-                // e.g., aura_node_lib::start_node(app_config.node.clone(), Some(sp.clone())).await?;
-            } else {
-                tracing::warn!(
-                    "No seed phrase provided. Node might run as a non-validator or require it from elsewhere."
-                );
-                // e.g., aura_node_lib::start_node(app_config.node.clone(), None).await?;
-            }
-            println!("Node start command executed (implementation pending in aura-node-lib).");
-            // This is where you'd call into aura_node_lib to actually run the node.
-            // That function would likely not return unless the node is shut down.
-            // For now, we just print.
-            // Example:
-            // aura_node_lib::run(app_config.node.clone(), seed_phrase).await?;
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await; // Placeholder
+            tracing::debug!(
+                "Node configuration from app_config.node: {:?}",
+                app_config.node
+            );
+
+            // Construct aura_node_lib::config::AuraNodeConfig from aura::config::NodeConfig
+            let node_lib_config = aura_node_lib::AuraNodeConfig {
+                node_id: "simulation-node-0".to_string(), // Example node ID for simulation
+                db_path: {
+                    let expanded_node_data_dir =
+                        shellexpand::tilde(&app_config.node.node_data_dir).into_owned();
+                    let data_dir_path = std::path::PathBuf::from(expanded_node_data_dir);
+                    if !data_dir_path.exists() {
+                        std::fs::create_dir_all(&data_dir_path).with_context(|| {
+                            format!("Failed to create node data directory: {:?}", data_dir_path)
+                        })?;
+                    }
+                    data_dir_path.join("aura_node_sim.db") // Specific DB name for simulation
+                },
+                p2p: aura_node_lib::config::P2PConfig {
+                    listen_addr: app_config.node.p2p_listen_address.clone(),
+                    external_addr: None,
+                    seeds: app_config.node.bootstrap_peers.clone(),
+                    max_peers: 10, // Reduced for single node simulation
+                },
+                consensus: aura_node_lib::config::ConsensusConfig {
+                    validators: vec![], // Not used in single node PoA-less simulation
+                    timeouts: aura_node_lib::config::TimeoutConfig {
+                        propose: 3000,
+                        prevote: 1000,
+                        precommit: 1000,
+                        commit: 1000,
+                    },
+                },
+                rpc: Some(aura_node_lib::config::RpcConfig {
+                    listen_addr: app_config.node.rpc_listen_address.clone(),
+                    methods: vec!["status".to_string(), "broadcast_tx".to_string()],
+                }),
+            };
+            tracing::info!("Constructed AuraNodeLibConfig: {:?}", node_lib_config);
+
+            // Node identity (PrivateKey)
+            let node_sk = match seed_phrase {
+                Some(sp) => {
+                    tracing::info!("Using provided seed phrase for node identity.");
+                    aura_core::keys::PrivateKey::from_seed_phrase_str(&sp).map_err(|e| {
+                        anyhow::anyhow!("Failed to derive private key from seed: {}", e)
+                    })?
+                }
+                None => {
+                    tracing::warn!(
+                        "No seed phrase provided. Generating a new random private key for simulation. THIS IS EPHEMERAL."
+                    );
+                    // For a persistent simulated node, you might want to load/save this key or use a fixed dev seed.
+                    // Example fixed dev seed: "test test test test test test test test test test test junk"
+                    // let dev_seed = "test test test test test test test test test test test junk";
+                    // aura_core::keys::PrivateKey::from_seed_phrase_str(dev_seed)?
+                    aura_core::keys::PrivateKey::new_random()
+                }
+            };
+
+            let node = aura_node_lib::node::AuraNode::new(node_lib_config, node_sk)
+                .map_err(|e| anyhow::anyhow!("Failed to initialize AuraNode: {}", e))?;
+
+            // start_simulation_loop runs indefinitely or until an unrecoverable error.
+            Arc::new(node)
+                .start_simulation_loop()
+                .await
+                .map_err(|e| anyhow::anyhow!("Simulation loop exited: {}", e))?;
+
+            tracing::info!("Aura node simulation loop finished.");
             Ok(())
         }
         NodeCommands::Status => {
             tracing::info!("Fetching Aura node status...");
-            // This would likely involve making an RPC call to a running node.
             println!("Node status command executed (implementation pending).");
             Ok(())
         }

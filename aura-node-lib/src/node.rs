@@ -1,102 +1,114 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{error, info};
 
-use tokio::runtime::Runtime;
-use tracing::info;
+use crate::Result;
+use crate::application::{AppService, AuraApplication};
+use crate::config::AuraNodeConfig;
+use crate::state::AuraState; // Uses AuraState from state.rs // Crate-local Result
 
-use crate::{
-    Error, Result, application::AuraApplication, config::AuraNodeConfig, state::AuraState,
-};
+const SIMULATION_BLOCK_INTERVAL_SECONDS: u64 = 5; // Produce a block every 5s in simulation
+const HEARTBEAT_INTERVAL_SECONDS: u64 = 10 * 60; // 10 minutes for heartbeat block
 
-// Import directly from crates
-
-/// The main Aura node that coordinates all components
-#[derive(Debug)]
 pub struct AuraNode {
-    /// Node configuration
-    config: AuraNodeConfig,
-    /// Application state
-    state: Arc<Mutex<AuraState>>,
-    /// Application service
-    #[allow(dead_code)]
-    application: Arc<AuraApplication>,
-    /// Tokio runtime for async operations
-    runtime: Runtime,
+    app: Arc<AuraApplication>,
+    // config: AuraNodeConfig, // Store if needed for other operations
 }
 
 impl AuraNode {
-    /// Create a new AuraNode with the given configuration
-    pub fn new(config: AuraNodeConfig, private_key: Arc<aura_core::PrivateKey>) -> Result<Self> {
-        // Create tokio runtime
-        let runtime =
-            Runtime::new().map_err(|e| Error::Other(format!("Failed to create runtime: {}", e)))?;
+    pub fn new(config: AuraNodeConfig, node_private_key: aura_core::PrivateKey) -> Result<Self> {
+        info!(
+            "Initializing AuraNode with ID: {}, DB Path: {:?}",
+            config.node_id, config.db_path
+        );
 
-        // Create node ID from configuration
-        let node_id = config.node_id.clone();
+        let aura_state = AuraState::new(&config.db_path, Arc::new(node_private_key))?;
+        let app_state_arc = Arc::new(Mutex::new(aura_state));
+        let aura_application = AuraApplication::new(app_state_arc, config.node_id.clone());
 
-        // Initialize state
-        let state = Arc::new(Mutex::new(AuraState::new(&config.db_path, private_key)?));
-
-        // Create application
-        let application = Arc::new(AuraApplication::new(state.clone(), node_id));
-
-        Ok(Self {
-            config,
-            state,
-            application,
-            runtime,
+        Ok(AuraNode {
+            app: Arc::new(aura_application),
+            // config,
         })
     }
 
-    /// Start the node and all its components
-    pub fn start(&self) -> Result<()> {
-        info!("Starting Aura node with ID: {}", self.config.node_id);
+    pub async fn start_simulation_loop(self: Arc<Self>) -> Result<()> {
+        info!("Starting single-node simulation loop...");
+        let mut current_round: u64 = 0; // Simplified round for logging
 
-        self.runtime.block_on(async {
-            // In a real implementation, this would:
-            // 1. Initialize the consensus engine with our application
-            // 2. Start P2P networking
-            // 3. Start RPC server if configured
-            // 4. Start other node services
+        // For heartbeat block timing
+        let mut last_block_time = tokio::time::Instant::now();
 
-            // Example of how you might initialize the Malachite engine:
-            // let engine_config = self.create_engine_config();
-            // let engine = malachitebft_engine::Engine::new(
-            //     engine_config,
-            //     self.application.clone(),
-            // ).await.map_err(|e| Error::Consensus(e.to_string()))?;
-            //
-            // engine.start().await.map_err(|e| Error::Consensus(e.to_string()))?;
+        loop {
+            let current_height = match self.app.current_height().await {
+                Ok(h) => h,
+                Err(e) => {
+                    error!("Simulation: Failed to get current height: {:?}", e);
+                    sleep(Duration::from_secs(10)).await; // Wait before retrying
+                    continue;
+                }
+            };
+            let next_height = current_height + 1;
 
-            info!("Aura node started successfully");
-            Ok(())
-        })
-    }
+            // Determine if it's time for a heartbeat block or regular block
+            let propose_reason =
+                if last_block_time.elapsed().as_secs() >= HEARTBEAT_INTERVAL_SECONDS {
+                    "heartbeat"
+                } else {
+                    // In a real system, we'd check for transactions.
+                    // For simulation, we just proceed unless it's a heartbeat.
+                    // The current `propose_block` will create empty blocks if mempool is empty.
+                    "regular (or empty if no txs)"
+                };
 
-    /// Stop the node and all its components
-    pub fn stop(&self) -> Result<()> {
-        info!("Stopping Aura node");
+            info!(
+                "Simulation: Attempting to propose {} block for height: {}, round: {}",
+                propose_reason, next_height, current_round
+            );
 
-        self.runtime.block_on(async {
-            // In a real implementation, this would:
-            // 1. Stop the consensus engine
-            // 2. Stop P2P networking
-            // 3. Stop RPC server
-            // 4. Stop other node services
-            // 5. Flush state to disk
+            match self.app.propose_block(next_height, current_round).await {
+                Ok(block_proposal) => {
+                    info!(
+                        "Simulation: Proposed block successfully for height: {}. Transactions: {}",
+                        block_proposal.height,
+                        block_proposal.transactions.len()
+                    );
 
-            info!("Aura node stopped successfully");
-            Ok(())
-        })
-    }
+                    match self.app.apply_block(block_proposal).await {
+                        Ok(_) => {
+                            info!(
+                                "Simulation: Successfully applied block for height: {}",
+                                next_height
+                            );
+                            last_block_time = tokio::time::Instant::now(); // Reset heartbeat timer
+                        }
+                        Err(e) => {
+                            error!(
+                                "Simulation: Failed to apply block for height {}: {:?}",
+                                next_height, e
+                            );
+                            // For simulation, log and continue. In a real system, this might be fatal.
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Simulation: Failed to propose block for height {}: {:?}",
+                        next_height, e
+                    );
+                    // This could happen due to state lock contention or other issues.
+                }
+            }
 
-    /// Get a reference to the node's configuration
-    pub fn config(&self) -> &AuraNodeConfig {
-        &self.config
-    }
+            current_round = current_round.wrapping_add(1);
 
-    /// Get the current blockchain height
-    pub fn height(&self) -> Result<u64> {
-        let state = self.state.lock().map_err(|e| Error::State(e.to_string()))?;
-        Ok(state.height_value())
+            // Wait for the next block interval
+            sleep(Duration::from_secs(SIMULATION_BLOCK_INTERVAL_SECONDS)).await;
+        }
+        // Loop is infinite, Ok(()) is not typically reached unless a shutdown mechanism is added.
+        // For now, if it exits, it's an error path or unexpected.
+        // warn!("Simulation loop unexpectedly exited.");
+        // Ok(())
     }
 }

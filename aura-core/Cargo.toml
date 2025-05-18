@@ -8,14 +8,14 @@ ark-serialize-derive = { version = "0.5.0", optional = true }
 serde = { version = "1.0", features = ["derive", "serde_derive"] }
 serde_json = "1.0"
 hex = "0.4"
-thiserror = "2.0.12"
-bech32 = "0.11.0"                                                  # Current stable is ~1.0.58
+thiserror = "2.0.12"                                               # Unified version
+bech32 = "0.11.0"
 anyhow = "1.0"
 # The rand/rand_core ecosystem can be complex with version compatibility
 # Use versions known to work with ark 0.5.0 
-rand = "0.8.5"                                                 # Downgrade to a version known to work with ark 0.5.0
-rand_core = "0.6.4"                                            # Corresponding rand_core version
-getrandom = "0.2.8"                                            # Ensure compatible getrandom version
+rand = "0.8.5"
+rand_core = "0.6.4"
+getrandom = "0.2.8"
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] } # Latest stable
 
 # Hashing
@@ -66,11 +66,6 @@ ark-std = { version = "0.5.0", default-features = false, features = [
 
 # Tracing for logging (optional)
 tracing = { version = "0.1", optional = true }
-
-# These seem less like core crypto lib dependencies and more app/CLI level.
-# If aura-core doesn't directly use them, move to aura/Cargo.toml.
-# toml = "0.8.12"
-# shellexpand = "3.1.0"
 
 [features]
 default = ["std", "mock-zkp"]

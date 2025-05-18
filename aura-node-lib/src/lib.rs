@@ -1,7 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex}; // Mutex is used in AuraApplication
 
 use aura_core::CoreError;
-use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
+pub use redb::{CommitError, DatabaseError, StorageError, TableError, TransactionError};
 
 // Re-export Malachite types for use in our crate
 pub use malachitebft_app;
@@ -12,23 +12,22 @@ pub use malachitebft_engine;
 pub use malachitebft_peer;
 
 mod application;
-mod config;
-mod node;
+pub mod config; // Make config module public
+pub mod node; // Make node module public to access AuraNode
 mod state;
 
 pub use application::AuraApplication;
 pub use config::AuraNodeConfig;
-pub use node::AuraNode;
-pub use state::AuraState;
+pub use node::AuraNode; // Export AuraNode
+pub use state::{AuraState, Block}; // Export AuraState and Block from state module
 
-/// Represents the state of the Aura node
+/// Represents the state of the Aura node (potentially for higher-level management, currently unused)
 #[derive(Debug)]
+#[allow(dead_code)] // This struct seems unused for now
 pub struct AuraNodeState {
     /// The current application state
-    #[allow(dead_code)]
     app_state: Arc<Mutex<AuraState>>,
     /// Node configuration
-    #[allow(dead_code)]
     config: AuraNodeConfig,
 }
 

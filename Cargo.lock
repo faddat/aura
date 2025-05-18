@@ -522,6 +522,9 @@ name = "aura"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aura-core",
+ "aura-node-lib",
+ "aura-wallet-lib",
  "clap",
  "config 0.15.11",
  "serde",
@@ -577,10 +580,11 @@ dependencies = [
  "informalsystems-malachitebft-core-types",
  "informalsystems-malachitebft-engine",
  "informalsystems-malachitebft-peer",
- "libp2p-identity",
+ "libp2p",
  "redb",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.12",
  "tokio",
  "tracing",

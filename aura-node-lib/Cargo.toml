@@ -14,7 +14,11 @@ malachitebft-engine = { git = "https://github.com/informalsystems/malachite", re
 malachitebft-config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
 malachitebft-core-consensus = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-consensus" }
 malachitebft-peer = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-peer" }
-libp2p-identity = "0.2.11    "
+libp2p = { version = "0.55.0", default-features = false, features = [
+    "macros",
+    "ed25519",
+    "tokio",
+] } # Example: minimal set for identity types
 
 # State Storage
 redb = "2.1.0" # Or latest stable version
@@ -23,16 +27,18 @@ redb = "2.1.0" # Or latest stable version
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",
-    "sync",
-] } # sync for Mutex etc.
+    "sync",            # for Mutex etc.
+    "time",            # for sleep in simulation loop
+] }
 async-trait = "0.1.77" # Malachite's app trait might be async
 
 # Utilities
 anyhow = "1.0"
-thiserror = "2.0.12"                               # Matching aura-core
+thiserror = "2.0.12"
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10.9"                                    # Using sha2, removed separate sha256
 
 # RPC (Example: jsonrpsee, choose one)
 # jsonrpsee = { version = "0.22", features = ["full"] , optional = true }
