@@ -4,3 +4,49 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+thiserror = "2.0.12"
+anyhow = "1.0"
+rand = "0.9.1" # For generating randomness
+zeroize = { version = "1.6", features = [
+    "zeroize_derive",
+] } # For securely clearing sensitive data
+
+# Hashing
+sha2 = "0.10"
+blake2 = "0.10"
+
+# Address encoding
+bech32 = "0.11.0"
+
+# Seed phrases and key derivation
+bip39 = "2.0"
+# For SLIP-0010 or BIP32-like derivation (optional for initial simplicity)
+# hdpath = "0.5" # Example, or use direct slip10 crates
+
+# Arkworks ZKP Suite (using BLS12-381 as an example curve)
+ark-ff = { version = "0.5.0" }
+ark-ec = { version = "0.5.0" }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = [
+    "curve",
+] }
+ark-relations = { version = "0.5.0", default-features = false } # For R1CS
+ark-r1cs-std = { version = "0.5.0", default-features = false } # For building circuits with std lib components
+ark-crypto-primitives = { version = "0.5.0", features = [
+    "sponge",
+    "crh",
+] } # For Poseidon, etc.
+ark-groth16 = { version = "0.5.0", default-features = false, features = [
+    "r1cs",
+] } # Example proving system
+# Or ark-marlin, ark-plonk etc.
+
+# For ZKP parameter generation (if done in code, often done offline)
+# ark-snark = { version = "0.4.0" }
+
+[features]
+default = []
+# Add a "mock-zkp" feature for easier testing without full ZKP overhead
+mock-zkp = []
