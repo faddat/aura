@@ -25,8 +25,10 @@ pub use state::AuraState;
 #[derive(Debug)]
 pub struct AuraNodeState {
     /// The current application state
+    #[allow(dead_code)]
     app_state: Arc<Mutex<AuraState>>,
     /// Node configuration
+    #[allow(dead_code)]
     config: AuraNodeConfig,
 }
 

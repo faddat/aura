@@ -13,8 +13,11 @@ use crate::{
 pub trait AppService {
     type Error;
 
+    #[allow(unused)]
     async fn current_height(&self) -> std::result::Result<u64, Self::Error>;
+    #[allow(unused)]
     async fn apply_block(&self, block: Block) -> std::result::Result<(), Self::Error>;
+    #[allow(unused)]
     async fn propose_block(
         &self,
         height: u64,

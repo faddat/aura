@@ -1,7 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use redb::{Database, ReadableTable, TableDefinition};
-use serde_json;
+use redb::{Database, TableDefinition};
 use tracing::{debug, info};
 
 // Use simple types for now
@@ -21,8 +20,6 @@ pub struct Block {
 /// Table definitions for the state database
 const HEIGHT_TABLE: TableDefinition<&str, u64> = TableDefinition::new("height");
 const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks");
-const ACCOUNTS_TABLE: TableDefinition<&[u8], u64> = TableDefinition::new("accounts");
-const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions");
 
 /// Represents the application state for the Aura blockchain
 #[derive(Debug)]
@@ -32,6 +29,7 @@ pub struct AuraState {
     /// Current blockchain height
     current_height: u64,
     /// Private key for signing blocks (would typically come from secure storage)
+    #[allow(dead_code)]
     private_key: Arc<aura_core::PrivateKey>,
 }
 

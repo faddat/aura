@@ -1,15 +1,13 @@
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::{
     Error, Result, application::AuraApplication, config::AuraNodeConfig, state::AuraState,
 };
 
 // Import directly from crates
-use malachitebft_peer::PeerId as NodeId;
 
 /// The main Aura node that coordinates all components
 #[derive(Debug)]
@@ -19,6 +17,7 @@ pub struct AuraNode {
     /// Application state
     state: Arc<Mutex<AuraState>>,
     /// Application service
+    #[allow(dead_code)]
     application: Arc<AuraApplication>,
     /// Tokio runtime for async operations
     runtime: Runtime,
