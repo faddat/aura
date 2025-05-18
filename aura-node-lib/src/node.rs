@@ -2,8 +2,7 @@ use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use aura_core::Transaction;
 use redb::{
-    CommitError, Database, DatabaseError, StorageError, TableDefinition, TableError,
-    TransactionError,
+    Database, TableDefinition,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

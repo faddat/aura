@@ -577,7 +577,7 @@ dependencies = [
  "informalsystems-malachitebft-core-types",
  "informalsystems-malachitebft-engine",
  "informalsystems-malachitebft-peer",
- "libp2p-identity",
+ "libp2p",
  "redb",
  "serde",
  "serde_json",
