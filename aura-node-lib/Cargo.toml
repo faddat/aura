@@ -1,6 +1,41 @@
 [package]
 name = "aura-node-lib"
 version = "0.1.0"
-edition = "2024"
+edition = "2024"       # Matching your workspace
 
 [dependencies]
+# Aura Core
+aura-core = { path = "../aura-core" }
+
+# Malachite BFT - Using specific commit 2e950b5
+malachitebft-app = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-app" }
+malachitebft-core-types = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-types" }
+malachitebft-engine = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-engine" }
+malachitebft-config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
+
+# State Storage
+redb = "2.1.0" # Or latest stable version
+
+# Async
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+] } # sync for Mutex etc.
+async-trait = "0.1.77" # Malachite's app trait might be async
+
+# Utilities
+anyhow = "1.0"
+thiserror = "1.0"                                  # Matching aura-core
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# RPC (Example: jsonrpsee, choose one)
+# jsonrpsee = { version = "0.22", features = ["full"] , optional = true }
+# actix-web = { version = "4", optional = true }
+
+
+[features]
+default = []
+# rpc-server = ["dep:jsonrpsee"] # Example feature for enabling RPC
