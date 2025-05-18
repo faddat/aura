@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use aura_core::Transaction;
+use malachitebft_core_types::Round;
 use redb::{Database, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,8 +45,7 @@ pub struct AuraState {
     pending_transactions: Vec<Transaction>,
     #[allow(dead_code)]
     node_private_key: Arc<aura_core::PrivateKey>,
-    // Corrected: Use the fully qualified path for Round if it's not in prelude for this module
-    pub current_round: malachitebft_app_channel::app::types::Round,
+    pub current_round: Round,
     mempool: VecDeque<Transaction>,
 }
 
@@ -72,7 +72,7 @@ impl AuraState {
             pending_block_timestamp: chrono::Utc::now().timestamp(),
             pending_transactions: Vec::new(),
             node_private_key,
-            current_round: malachitebft_app_channel::app::types::Round::new(0),
+            current_round: Round::new(0),
             mempool: VecDeque::new(),
         })
     }
