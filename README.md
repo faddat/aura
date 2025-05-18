@@ -13,6 +13,19 @@ magical, simple private currency in rust
 
 
 
+## Status
+
+For the love of god don't use this right now.  It is:
+
+* Not working
+* Not audited
+* Not finished
+* Not secure
+
+But if you want to contribute, I'd love it!
+
+
+
 
 
 
