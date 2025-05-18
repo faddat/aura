@@ -1,11 +1,12 @@
 use std::sync::{Arc, Mutex};
 
-use aura_core::{CoreError, Transaction};
+use aura_core::CoreError;
 
-use informalsystems_malachitebft_app as malachitebft_app;
-use informalsystems_malachitebft_config as malachitebft_config;
-use informalsystems_malachitebft_core_types as malachitebft_core_types;
-use informalsystems_malachitebft_engine as malachitebft_engine;
+// Explicitly import the crates with the renamed dependencies
+extern crate malachitebft_app;
+extern crate malachitebft_config;
+extern crate malachitebft_core_types;
+extern crate malachitebft_engine;
 
 mod application;
 mod config;
@@ -56,8 +57,8 @@ pub enum Error {
 
 /// Re-export important Malachite types for convenience
 pub mod types {
-    pub use informalsystems_malachitebft_app::NodeId;
-    pub use informalsystems_malachitebft_core_types::{
+    pub use malachitebft_app::NodeId;
+    pub use malachitebft_core_types::{
         block::Block,
         consensus::{BlockHeader, Height, Round, Vote},
         crypto::Signature,

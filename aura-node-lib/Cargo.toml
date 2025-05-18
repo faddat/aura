@@ -8,10 +8,10 @@ edition = "2024"       # Matching your workspace
 aura-core = { path = "../aura-core" }
 
 # Malachite BFT - Using specific commit 2e950b5
-malachitebft-app = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-app" }
-malachitebft-core-types = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-types" }
-malachitebft-engine = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-engine" }
-malachitebft-config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
+malachitebft_app = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-app" }
+malachitebft_core_types = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-types" }
+malachitebft_engine = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-engine" }
+malachitebft_config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
 
 # State Storage
 redb = "2.1.0" # Or latest stable version

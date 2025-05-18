@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use informalsystems_malachitebft_app::{ApplicationService, NodeId};
-use informalsystems_malachitebft_core_types::{
+use malachitebft_app::{ApplicationService, NodeId};
+use malachitebft_core_types::{
     block::{Block, BlockId},
     consensus::{Height, Round},
     crypto::Signature,
