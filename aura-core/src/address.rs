@@ -5,20 +5,25 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-const ADDRESS_PAYLOAD_LENGTH: usize = 33; // Example: 32 bytes for compressed pubkey + 1 type byte
+// For BLS12-381, a compressed G1 point is 48 bytes.
+// If you add a version/type byte, it could be 49.
+// Let's assume for now the payload is just the compressed G1 point.
+pub const AURA_ADDRESS_PAYLOAD_LENGTH: usize = 48;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AuraAddress {
     hrp: String,
-    payload: Vec<u8>, // Typically the raw public key bytes (e.g., compressed secp256k1 or BLS12-381)
+    payload: Vec<u8>, // Raw public key bytes (compressed BLS12-381 G1 point)
 }
 
 impl AuraAddress {
     pub fn new(hrp: &str, payload: Vec<u8>) -> Result<Self, CoreError> {
-        // Basic validation, e.g. payload length
-        if payload.len() != ADDRESS_PAYLOAD_LENGTH { // Adjust as needed
-            // return Err(CoreError::InvalidAddress(format!("Invalid payload length: {}", payload.len())));
-            // For now, let's be flexible for early dev. Production should be strict.
+        if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
+            return Err(CoreError::InvalidAddress(format!(
+                "Invalid payload length: expected {}, got {}",
+                AURA_ADDRESS_PAYLOAD_LENGTH,
+                payload.len()
+            )));
         }
         Ok(AuraAddress {
             hrp: hrp.to_string(),
@@ -26,12 +31,8 @@ impl AuraAddress {
         })
     }
 
+    /// Creates an AuraAddress from compressed public key bytes.
     pub fn from_pubkey_bytes(pubkey_bytes: &[u8], hrp: &str) -> Result<Self, CoreError> {
-        // Here, pubkey_bytes would be the compressed form of an elliptic curve point.
-        // We might add a version/type byte if needed in the future.
-        // For now, let's assume pubkey_bytes is directly the payload.
-        // This needs to match how PublicKey::to_address serializes it.
-        // If PublicKey::to_address creates a 33-byte array (e.g. from ark-serialize compressed), then this is fine.
         Self::new(hrp, pubkey_bytes.to_vec())
     }
 
@@ -46,8 +47,9 @@ impl AuraAddress {
 
 impl fmt::Display for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Bech32m is generally preferred for new protocols over original Bech32
         let encoded = bech32::encode(&self.hrp, self.payload.to_base32(), Variant::Bech32m)
-            .map_err(|_| fmt::Error)?; // Convert bech32 error to fmt::Error
+            .map_err(|_| fmt::Error)?;
         write!(f, "{}", encoded)
     }
 }
@@ -64,21 +66,30 @@ impl FromStr for AuraAddress {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (hrp, data, variant) = bech32::decode(s)?;
         if variant != Variant::Bech32m {
-            // Or Bech32 if that's chosen
+            // Enforce Bech32m
             return Err(CoreError::InvalidAddress(
-                "Invalid bech32 variant".to_string(),
+                "Invalid bech32 variant, expected Bech32m".to_string(),
             ));
         }
-        if hrp != AURA_ADDR_HRP {
-            // return Err(CoreError::InvalidAddress(format!("Invalid HRP: expected {}, got {}", AURA_ADDR_HRP, hrp)));
-            // Be flexible for now if other HRPs are part of genesis for non-native assets.
-        }
+        // Allow flexibility in HRP for genesis if it contains non-native asset addresses,
+        // but for native Aura addresses, it should match.
+        // If strictly only Aura addresses, uncomment the check:
+        // if hrp != AURA_ADDR_HRP {
+        //     return Err(CoreError::InvalidAddress(format!("Invalid HRP: expected {}, got {}", AURA_ADDR_HRP, hrp)));
+        // }
         let payload = Vec::<u8>::from_base32(&data)?;
+        // Re-validate length after decoding
+        if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
+            return Err(CoreError::InvalidAddress(format!(
+                "Invalid payload length after decoding: expected {}, got {}",
+                AURA_ADDRESS_PAYLOAD_LENGTH,
+                payload.len()
+            )));
+        }
         Ok(AuraAddress { hrp, payload })
     }
 }
 
-// Implement Serialize and Deserialize to use the String representation
 impl Serialize for AuraAddress {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

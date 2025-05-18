@@ -1,11 +1,22 @@
 use crate::error::CoreError;
-use crate::{AURA_ADDR_HRP, AuraAddress, CurveFr, CurveG1}; // Assuming AuraAddress is defined elsewhere
+use crate::{AURA_ADDR_HRP, AuraAddress, CurveFr, CurveG1};
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bip39::{Language, Mnemonic};
+use bip39::{Language, Mnemonic, Seed as Bip39Seed}; // Renamed to avoid conflict
 use rand::rngs::OsRng;
-use sha2::{Digest, Sha256};
+// use sha2::{Digest, Sha256}; // No longer needed for simplified seed derivation if using bip39::Seed
 use zeroize::Zeroize;
+
+// --- Seed (raw bytes derived from Mnemonic) ---
+#[derive(Clone, Zeroize)]
+#[zeroize(drop)]
+pub struct Seed(Bip39Seed); // Wrap bip39::Seed
+
+impl Seed {
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
 
 // --- Seed Phrase ---
 #[derive(Clone, Zeroize)]
@@ -29,23 +40,10 @@ impl SeedPhrase {
         self.0.phrase()
     }
 
-    /// Derive a master seed (e.g., 512 bits) from the mnemonic.
-    /// For simplicity, we'll just hash the phrase. Proper BIP39 uses PBKDF2.
-    /// For "crazy simple" this is okay, but for production, use BIP39 seed derivation.
-    fn to_master_seed(&self) -> [u8; 64] {
-        // 512 bits
-        // WARNING: This is a simplified seed derivation for "crazy simple".
-        // Production systems should use BIP39's specified seed generation (Mnemonic::to_seed).
-        let mut hasher = Sha256::new();
-        hasher.update(self.0.phrase().as_bytes());
-        let result_first_32 = hasher.finalize_reset();
-        hasher.update(result_first_32); // Simple stretch
-        let result_second_32 = hasher.finalize();
-
-        let mut seed = [0u8; 64];
-        seed[..32].copy_from_slice(&result_first_32);
-        seed[32..].copy_from_slice(&result_second_32);
-        seed
+    /// Derive a master seed from the mnemonic using BIP39 standard.
+    /// The empty passphrase "" is standard for non-password-protected seeds.
+    pub fn to_seed(&self) -> Seed {
+        Seed(Bip39Seed::new(&self.0, ""))
     }
 }
 
@@ -53,20 +51,35 @@ impl SeedPhrase {
 // This will be a scalar in the field CurveFr
 #[derive(Clone, Zeroize, CanonicalSerialize, CanonicalDeserialize, PartialEq, Eq, Debug)]
 #[zeroize(drop)]
-pub struct PrivateKey(pub CurveFr); // Make pub(crate) if direct access isn't needed outside
+pub struct PrivateKey(pub CurveFr);
 
 impl PrivateKey {
     pub fn new_random() -> Self {
         PrivateKey(CurveFr::rand(&mut OsRng))
     }
 
-    pub fn from_seed(seed_phrase: &SeedPhrase) -> Result<Self, CoreError> {
-        let master_seed = seed_phrase.to_master_seed();
-        // Derive private key from master seed.
-        // For "crazy simple", we can hash the seed to get a field element.
-        // More robust systems use HKDF or SLIP-0010 for derivation paths.
-        let sk_scalar = CurveFr::from_be_bytes_mod_order(&master_seed[..32]); // Use first 32 bytes
+    /// Derives a private key from the first 32 bytes of the BIP39 seed.
+    /// For "crazy simple," this is a basic way to get a deterministic key.
+    /// More advanced systems use HD Wallet derivation paths (e.g., SLIP-0010)
+    /// from the BIP39 seed to derive multiple keys.
+    pub fn from_seed(seed: &Seed) -> Result<Self, CoreError> {
+        let seed_bytes = seed.as_bytes();
+        if seed_bytes.len() < 32 {
+            return Err(CoreError::KeyDerivation(
+                "BIP39 seed is too short (< 32 bytes)".to_string(),
+            ));
+        }
+        // Use the first 32 bytes of the 64-byte BIP39 seed for the private key scalar.
+        // This is a common simple approach.
+        let sk_scalar = CurveFr::from_be_bytes_mod_order(&seed_bytes[..32]);
         Ok(PrivateKey(sk_scalar))
+    }
+
+    // Helper to directly get PK from a seed phrase string
+    pub fn from_seed_phrase_str(phrase: &str) -> Result<Self, CoreError> {
+        let seed_phrase_obj = SeedPhrase::from_str(phrase)?;
+        let bip39_seed = seed_phrase_obj.to_seed();
+        Self::from_seed(&bip39_seed)
     }
 
     pub fn to_bytes_be(&self) -> Vec<u8> {
@@ -95,35 +108,29 @@ impl PublicKey {
         self.0
             .serialize_compressed(&mut pk_bytes)
             .map_err(|e| CoreError::Serialization(e.to_string()))?;
+        // Ensure pk_bytes is exactly ADDRESS_PAYLOAD_LENGTH if that's a strict requirement
+        // For BLS12-381 G1 compressed, it's 48 bytes. G2 is 96 bytes.
+        // ADDRESS_PAYLOAD_LENGTH in address.rs is 33, which is more like secp256k1.
+        // This needs to be consistent. Let's assume ADDRESS_PAYLOAD_LENGTH in address.rs
+        // will be updated to match the actual curve's compressed pubkey size.
+        // If AuraAddress expects a different format (e.g. hash), that needs to be done here.
         AuraAddress::from_pubkey_bytes(&pk_bytes, AURA_ADDR_HRP)
     }
 }
 
-// --- Signature (Placeholder - ZKPs replace traditional signatures for transfers) ---
-// We might still need signatures for other things (e.g., validator messages in Malachite if not ZKP based).
-// For now, let's assume ZKPs cover the main financial transaction authorization.
-// If general signatures are needed, you'd implement something like Schnorr or ECDSA over CurveG1/CurveFr.
+// --- Signature (Placeholder) ---
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Signature {
-    // r: CurveFr,
-    // s: CurveFr,
-    pub placeholder_data: Vec<u8>, // Remove later
+    pub placeholder_data: Vec<u8>,
 }
-
-// Example functions that would be here if general sigs were used:
-// impl PrivateKey {
-// pub fn sign(&self, message_hash: &[u8]) -> Result<Signature, CoreError> { unimplemented!() }
-// }
-// impl PublicKey {
-// pub fn verify(&self, message_hash: &[u8], signature: &Signature) -> Result<bool, CoreError> { unimplemented!() }
-// }
 
 // --- Key Management Helper ---
 pub fn generate_keypair_from_seed_phrase_str(
     phrase: &str,
 ) -> Result<(PrivateKey, PublicKey, AuraAddress), CoreError> {
-    let seed = SeedPhrase::from_str(phrase)?;
-    let sk = PrivateKey::from_seed(&seed)?;
+    let seed_phrase_obj = SeedPhrase::from_str(phrase)?;
+    let bip39_seed = seed_phrase_obj.to_seed();
+    let sk = PrivateKey::from_seed(&bip39_seed)?;
     let pk = PublicKey::from_private(&sk);
     let addr = pk.to_address()?;
     Ok((sk, pk, addr))
@@ -131,9 +138,10 @@ pub fn generate_keypair_from_seed_phrase_str(
 
 pub fn generate_new_keypair_and_seed()
 -> Result<(SeedPhrase, PrivateKey, PublicKey, AuraAddress), CoreError> {
-    let seed = SeedPhrase::new_random()?;
-    let sk = PrivateKey::from_seed(&seed)?;
+    let seed_phrase_obj = SeedPhrase::new_random()?;
+    let bip39_seed = seed_phrase_obj.to_seed();
+    let sk = PrivateKey::from_seed(&bip39_seed)?;
     let pk = PublicKey::from_private(&sk);
     let addr = pk.to_address()?;
-    Ok((seed, sk, pk, addr))
+    Ok((seed_phrase_obj, sk, pk, addr))
 }

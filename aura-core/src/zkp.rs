@@ -1,135 +1,184 @@
-use crate::AuraCurve; // Your chosen curve (e.g., Bls12_381)
+use crate::AuraCurve;
 use crate::CoreError;
 use crate::keys::PrivateKey;
 use crate::note::{Note, NoteCommitment, Nullifier};
-use crate::transaction::{Fee, Memo, ZkProofData};
-use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey}; // Example
+use crate::transaction::{Fee, ZkProofData}; // Removed Memo as it's not directly part of circuit public inputs
+use ark_groth16::{Groth16, PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
-use ark_snark::SNARK; // For proving system trait
-use rand::rngs::OsRng; // Or a seeded RNG for determinism if needed
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Read, Write};
+use ark_snark::SNARK;
+use rand::rngs::OsRng;
+use std::fs::File;
+use std::path::Path;
 
 // --- Transfer Circuit Definition (Conceptual) ---
 // This struct defines the inputs (witnesses) and public parameters for the ZKP.
 // The actual constraints are defined when implementing ConstraintSynthesizer.
-#[derive(Clone)]
+#[derive(Clone, Default)] // Added Default for easier dummy instance creation
 pub struct TransferCircuit {
     // --- Private Inputs (Witnesses) ---
-    pub input_notes: Vec<Note>, // The actual notes being spent
-    pub input_notes_merkle_paths: Vec<Vec<([u8; 32], bool)>>, // Merkle proofs for each input note
-    pub input_spending_key: PrivateKey, // Spending key for input notes
+    pub input_notes: Vec<Note>,
+    pub input_notes_merkle_paths: Vec<Vec<([u8; 32], bool)>>,
+    pub input_spending_key: Option<PrivateKey>, // Option for dummy instances
 
-    pub output_notes: Vec<Note>, // The new notes being created (to recipient, and change to self)
+    pub output_notes: Vec<Note>,
 
     // --- Public Inputs ---
-    pub anchor: [u8; 32], // Merkle root of the note commitment tree
+    pub anchor: [u8; 32],
     pub fee: Fee,
-    // pub recipient_external_address_for_memo: Option<AuraAddress>, // If memo needs public data
-    // Any other public data that needs to be part of the proof
+    pub root_nullifier_for_spent_notes: [u8; 32], // combined hash of all nullifiers being spent
+                                                  // This is a common way to commit to the nullifiers publicly.
+                                                  // The circuit then proves each individual nullifier was part of this root.
 }
 
 impl ConstraintSynthesizer<ark_bls12_381::Fr> for TransferCircuit {
     fn generate_constraints(
         self,
-        cs: ConstraintSystemRef<ark_bls12_381::Fr>,
+        _cs: ConstraintSystemRef<ark_bls12_381::Fr>, // Renamed to _cs as it's unused in placeholder
     ) -> Result<(), SynthesisError> {
-        // *************************************************************************
-        // THIS IS WHERE THE ACTUAL ZKP LOGIC/CONSTRAINTS ARE DEFINED.
-        // This is highly complex and specific to the chosen ZKP scheme and note design.
-        //
-        // Key constraints to implement:
-        // 1. Input Note Ownership:
-        //    - For each input note, prove knowledge of `rho` and `sk` such that
-        //      `cm = Commit(value, owner_pk, rho)`.
-        //    - Prove `pk` corresponds to `sk`.
-        // 2. Merkle Path Validity:
-        //    - For each input note, prove its commitment `cm` is in the tree at `anchor`
-        //      using its `merkle_path`.
-        // 3. Nullifier Correctness & Uniqueness:
-        //    - For each input note, derive `nf = Nullify(rho, sk, path_pos_or_cm)`
-        //      (the nullifier must be revealed publicly with the transaction).
-        //      The circuit ensures it's derived correctly. Uniqueness is checked by the node
-        //      against the global nullifier set.
-        // 4. Value Conservation:
-        //    - `sum(input_note_values) == sum(output_note_values) + fee.0`.
-        // 5. Output Note Correctness:
-        //    - Prove output note commitments `cm_out = Commit(value_out, owner_pk_out, rho_out)`
-        //      are correctly formed.
-        // *************************************************************************
-
-        // Placeholder:
-        if self.input_notes.is_empty() && self.output_notes.is_empty() {
-            // Trivial case, maybe for a fee-only tx or a no-op in some contexts
-        }
-
-        // Example (very pseudo-code, actual implementation uses R1CS variables):
-        // let total_input_value = self.input_notes.iter().map(|n| n.value).sum::<u64>();
-        // let total_output_value = self.output_notes.iter().map(|n| n.value).sum::<u64>();
-        // cs.enforce_constraint(
-        // lc!() + total_input_value,
-        // lc!() + 1,
-        // lc!() + total_output_value + self.fee.0,
-        // )?;
+        // ... (Same complex ZKP logic placeholder as before) ...
 
         #[cfg(feature = "mock-zkp")]
         {
-            // If mock-zkp is enabled, don't actually generate constraints,
-            // or generate trivial ones. This is for faster testing of other parts.
             Ok(())
         }
         #[cfg(not(feature = "mock-zkp"))]
         {
             // Actual constraint generation logic here
-            // This would involve allocating variables for all inputs,
-            // using gadgets from ark-r1cs-std (e.g., for hashing, EC math, boolean logic),
-            // and adding constraints to `cs`.
-            // For now, returning Ok to make it compile.
-            Err(SynthesisError::AssignmentMissing) // Or some other appropriate error until implemented
+            tracing::error!("ZKP circuit constraint generation is not yet implemented!");
+            Err(SynthesisError::UnconstrainedVariable) // More specific error
         }
     }
 }
 
-// --- ZKP Service (Conceptual Trait or Struct) ---
-// This abstracts the ZKP proving and verification.
-pub struct ZkpHandler {
-    proving_key: Option<ProvingKey<AuraCurve>>, // Loaded by prover (wallet)
-    verifying_key: VerifyingKey<AuraCurve>,     // Loaded by verifier (node)
-    prepared_verifying_key: PreparedVerifyingKey<AuraCurve>, // Preprocessed for faster verification
+// --- ZKP Parameters (PK and VK) ---
+pub struct ZkpParameters {
+    pub proving_key: ProvingKey<AuraCurve>,
+    pub verifying_key: VerifyingKey<AuraCurve>,
+    // Prepared verifying key for faster verification
+    pub prepared_verifying_key: PreparedVerifyingKey<AuraCurve>,
 }
 
-impl ZkpHandler {
-    pub fn new(
-        proving_key_bytes: Option<&[u8]>,
-        verifying_key_bytes: &[u8],
-    ) -> Result<Self, CoreError> {
-        let pk = if let Some(pk_bytes) = proving_key_bytes {
-            Some(
-                ProvingKey::<AuraCurve>::deserialize_compressed(pk_bytes)
-                    .map_err(|e| CoreError::ZkpSetup(format!("Failed to deserialize PK: {}", e)))?,
-            )
-        } else {
-            None
-        };
+impl ZkpParameters {
+    /// Generates new (dummy) parameters for a given circuit.
+    /// WARNING: This is for testing/development ONLY. Real parameters require a secure trusted setup.
+    pub fn generate_dummy_for_circuit(circuit: TransferCircuit) -> Result<Self, CoreError> {
+        #[cfg(feature = "mock-zkp")]
+        {
+            // In mock mode, we might want to avoid the costly setup or load minimal dummy keys
+            // For now, let's proceed with generation but acknowledge it's for mock.
+            tracing::warn!(
+                "Generating DUMMY ZKP parameters for MOCK setup. DO NOT USE IN PRODUCTION."
+            );
+        }
 
-        let vk = VerifyingKey::<AuraCurve>::deserialize_compressed(verifying_key_bytes)
-            .map_err(|e| CoreError::ZkpSetup(format!("Failed to deserialize VK: {}", e)))?;
+        let (pk, vk) =
+            Groth16::<AuraCurve>::generate_random_parameters_with_reduction(circuit, &mut OsRng)
+                .map_err(|e| {
+                    CoreError::ZkpSetup(format!("Dummy parameter generation failed: {}", e))
+                })?;
 
         let pvk = Groth16::<AuraCurve>::prepare_verifying_key(&vk);
-
-        Ok(ZkpHandler {
+        Ok(ZkpParameters {
             proving_key: pk,
             verifying_key: vk,
             prepared_verifying_key: pvk,
         })
     }
 
-    #[cfg(not(feature = "mock-zkp"))]
-    pub fn generate_proof(&self, circuit: TransferCircuit) -> Result<ZkProofData, CoreError> {
-        let pk = self
-            .proving_key
-            .as_ref()
-            .ok_or_else(|| CoreError::ZkpSetup("Proving key not loaded".to_string()))?;
+    pub fn load_from_files(pk_path: &Path, vk_path: &Path) -> Result<Self, CoreError> {
+        let pk_file = File::open(pk_path).map_err(|e| {
+            CoreError::ZkpSetup(format!(
+                "Failed to open proving key file {:?}: {}",
+                pk_path, e
+            ))
+        })?;
+        let proving_key =
+            ProvingKey::<AuraCurve>::deserialize_compressed(pk_file).map_err(|e| {
+                CoreError::ZkpSetup(format!("Failed to deserialize proving key: {}", e))
+            })?;
 
-        let proof = Groth16::<AuraCurve>::prove(pk, circuit, &mut OsRng) // Use a proper RNG
+        let vk_file = File::open(vk_path).map_err(|e| {
+            CoreError::ZkpSetup(format!(
+                "Failed to open verifying key file {:?}: {}",
+                vk_path, e
+            ))
+        })?;
+        let verifying_key =
+            VerifyingKey::<AuraCurve>::deserialize_compressed(vk_file).map_err(|e| {
+                CoreError::ZkpSetup(format!("Failed to deserialize verifying key: {}", e))
+            })?;
+
+        let prepared_verifying_key = Groth16::<AuraCurve>::prepare_verifying_key(&verifying_key);
+
+        Ok(ZkpParameters {
+            proving_key,
+            verifying_key,
+            prepared_verifying_key,
+        })
+    }
+
+    // Method to load from embedded bytes (e.g., if you include them in the binary)
+    pub fn load_from_bytes(pk_bytes: &[u8], vk_bytes: &[u8]) -> Result<Self, CoreError> {
+        let proving_key =
+            ProvingKey::<AuraCurve>::deserialize_compressed(pk_bytes).map_err(|e| {
+                CoreError::ZkpSetup(format!(
+                    "Failed to deserialize proving key from bytes: {}",
+                    e
+                ))
+            })?;
+        let verifying_key =
+            VerifyingKey::<AuraCurve>::deserialize_compressed(vk_bytes).map_err(|e| {
+                CoreError::ZkpSetup(format!(
+                    "Failed to deserialize verifying key from bytes: {}",
+                    e
+                ))
+            })?;
+        let prepared_verifying_key = Groth16::<AuraCurve>::prepare_verifying_key(&verifying_key);
+        Ok(ZkpParameters {
+            proving_key,
+            verifying_key,
+            prepared_verifying_key,
+        })
+    }
+
+    // Placeholder for saving - typically not done by the client itself after a secure setup.
+    pub fn save_to_files(&self, pk_path: &Path, vk_path: &Path) -> Result<(), CoreError> {
+        let mut pk_file = File::create(pk_path).map_err(|e| {
+            CoreError::ZkpSetup(format!(
+                "Failed to create proving key file {:?}: {}",
+                pk_path, e
+            ))
+        })?;
+        self.proving_key
+            .serialize_compressed(&mut pk_file)
+            .map_err(|e| CoreError::ZkpSetup(format!("Failed to serialize proving key: {}", e)))?;
+
+        let mut vk_file = File::create(vk_path).map_err(|e| {
+            CoreError::ZkpSetup(format!(
+                "Failed to create verifying key file {:?}: {}",
+                vk_path, e
+            ))
+        })?;
+        self.verifying_key
+            .serialize_compressed(&mut vk_file)
+            .map_err(|e| {
+                CoreError::ZkpSetup(format!("Failed to serialize verifying key: {}", e))
+            })?;
+        Ok(())
+    }
+}
+
+// --- ZKP Handler (More of a service now) ---
+pub struct ZkpHandler; // Can be a ZST if it doesn't hold state, or hold PVK if only verifying
+
+impl ZkpHandler {
+    #[cfg(not(feature = "mock-zkp"))]
+    pub fn generate_proof(
+        proving_key: &ProvingKey<AuraCurve>,
+        circuit: TransferCircuit,
+    ) -> Result<ZkProofData, CoreError> {
+        let proof = Groth16::<AuraCurve>::prove(proving_key, circuit, &mut OsRng)
             .map_err(|e| CoreError::ProofGeneration(e.to_string()))?;
 
         let mut proof_bytes = Vec::new();
@@ -140,17 +189,20 @@ impl ZkpHandler {
     }
 
     #[cfg(feature = "mock-zkp")]
-    pub fn generate_proof(&self, _circuit: TransferCircuit) -> Result<ZkProofData, CoreError> {
+    pub fn generate_proof(
+        _proving_key: &ProvingKey<AuraCurve>, // Still take it to match signature
+        _circuit: TransferCircuit,
+    ) -> Result<ZkProofData, CoreError> {
         tracing::warn!("Mock ZKP proof generation!");
         Ok(ZkProofData {
-            proof_bytes: vec![0u8; 192],
-        }) // Dummy proof bytes
+            proof_bytes: vec![0u8; 192], // Groth16 proof on BLS12-381 is 2 G1 + 1 G2 = 48*2 + 96 = 192 bytes
+        })
     }
 
     #[cfg(not(feature = "mock-zkp"))]
     pub fn verify_proof(
-        &self,
-        public_inputs: &[ark_bls12_381::Fr], // These must be carefully prepared from the transaction
+        prepared_verifying_key: &PreparedVerifyingKey<AuraCurve>,
+        public_inputs: &[ark_bls12_381::Fr],
         proof_data: &ZkProofData,
     ) -> Result<bool, CoreError> {
         let proof = Proof::<AuraCurve>::deserialize_compressed(proof_data.proof_bytes.as_slice())
@@ -159,7 +211,7 @@ impl ZkpHandler {
         })?;
 
         Groth16::<AuraCurve>::verify_with_processed_vk(
-            &self.prepared_verifying_key,
+            prepared_verifying_key,
             public_inputs,
             &proof,
         )
@@ -168,43 +220,11 @@ impl ZkpHandler {
 
     #[cfg(feature = "mock-zkp")]
     pub fn verify_proof(
-        &self,
+        _prepared_verifying_key: &PreparedVerifyingKey<AuraCurve>, // Still take it
         _public_inputs: &[ark_bls12_381::Fr],
         _proof_data: &ZkProofData,
     ) -> Result<bool, CoreError> {
         tracing::warn!("Mock ZKP proof verification!");
         Ok(true)
-    }
-
-    // Placeholder for trusted setup (SRS generation) - This is typically done ONCE, offline.
-    // The resulting ProvingKey and VerifyingKey are then distributed.
-    pub fn trusted_setup_placeholder()
-    -> Result<(ProvingKey<AuraCurve>, VerifyingKey<AuraCurve>), CoreError> {
-        #[cfg(feature = "mock-zkp")]
-        {
-            // For mock, we can return dummy keys or panic
-            panic!(
-                "Mock ZKP does not perform trusted setup. Load pre-generated dummy keys if needed."
-            );
-        }
-        #[cfg(not(feature = "mock-zkp"))]
-        {
-            let dummy_circuit = TransferCircuit {
-                // Create a representative instance
-                input_notes: vec![],
-                input_notes_merkle_paths: vec![],
-                input_spending_key: PrivateKey::new_random(), // dummy
-                output_notes: vec![],
-                anchor: [0u8; 32],
-                fee: Fee(0),
-            };
-            // This generates toxic waste (the randomness `tau`, `alpha`, `beta`).
-            // In a real setup, this is a multi-party computation (MPC).
-            Groth16::<AuraCurve>::generate_random_parameters_with_reduction(
-                dummy_circuit,
-                &mut OsRng,
-            )
-            .map_err(|e| CoreError::ZkpSetup(e.to_string()))
-        }
     }
 }
