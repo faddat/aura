@@ -3,12 +3,12 @@ use std::sync::{Arc, Mutex};
 use aura_core::CoreError;
 
 // Re-export Malachite types for use in our crate
-pub use malachitebft_app as mbt_app;
-pub use malachitebft_config as mbt_config;
-pub use malachitebft_core_consensus as mbt_consensus;
-pub use malachitebft_core_types as mbt_core_types;
-pub use malachitebft_engine as mbt_engine;
-pub use malachitebft_peer as mbt_peer;
+pub use malachitebft_app;
+pub use malachitebft_config;
+pub use malachitebft_core_consensus;
+pub use malachitebft_core_types;
+pub use malachitebft_engine;
+pub use malachitebft_peer;
 
 mod application;
 mod config;
@@ -55,21 +55,4 @@ pub enum Error {
 
     #[error("Other error: {0}")]
     Other(String),
-}
-
-/// Re-export important Malachite types for convenience
-pub mod types {
-    // Import from app::types
-    pub use crate::mbt_app::types::PeerId as NodeId;
-
-    // Import from core_types
-    pub use crate::mbt_core_types::Height;
-    pub use crate::mbt_core_types::Round;
-    pub use crate::mbt_core_types::Signature;
-    pub use crate::mbt_core_types::Value as Block;
-    pub use crate::mbt_core_types::Vote;
-}
-
-fn main() {
-    println!("Hello, world!");
 }

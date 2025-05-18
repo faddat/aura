@@ -7,8 +7,8 @@ use crate::{
     Error, Result, application::AuraApplication, config::AuraNodeConfig, state::AuraState,
 };
 
-use crate::malachitebft_app::NodeId;
-use crate::malachitebft_engine;
+// Import directly from crates
+use malachitebft_peer::PeerId as NodeId;
 
 /// The main Aura node that coordinates all components
 #[derive(Debug)]

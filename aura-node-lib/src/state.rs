@@ -1,18 +1,14 @@
 use std::{path::Path, sync::Arc};
 
-use aura_core::{AuraAddress, Transaction};
+use aura_core::Transaction;
 use redb::{Database, ReadableTable, TableDefinition};
 use tracing::{debug, info};
 
-use crate::{
-    Error, Result,
-    malachitebft_app::NodeId,
-    malachitebft_core_types::{
-        block::{Block, BlockId},
-        consensus::{Height, Round},
-        crypto::Signature,
-    },
-};
+// Import directly from crates
+use malachitebft_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
+use malachitebft_peer::PeerId as NodeId;
+
+use crate::{Error, Result};
 
 /// Table definitions for the state database
 const HEIGHT_TABLE: TableDefinition<&str, u64> = TableDefinition::new("height");
@@ -104,21 +100,9 @@ impl AuraState {
         // 2. Create a properly structured block with transactions
         // 3. Include necessary metadata
 
-        // This is a simplified placeholder
-        let block = Block {
-            header: malachitebft_core_types::consensus::BlockHeader {
-                height,
-                round,
-                proposer: node_id.clone(),
-                // Other header fields should be populated as well
-                timestamp: 0,                      // Use actual timestamp
-                data_hash: Default::default(),     // Should be hash of block data
-                last_block_id: Default::default(), // Should point to previous block
-            },
-            // Block data would typically contain serialized transactions
-            data: Vec::new(),
-            // Other block fields as required
-        };
+        // This is a simplified placeholder - create an empty block value
+        let data = Vec::new(); // Empty data for now
+        let block = Block::new(height, round, node_id, data);
 
         Ok(block)
     }
@@ -160,7 +144,7 @@ impl AuraState {
         let height = match read_txn.open_table(HEIGHT_TABLE) {
             Ok(table) => {
                 match table.get("current")? {
-                    Some(height) => Height(height),
+                    Some(height) => Height::from(height),
                     None => {
                         // Height not set, initialize to 0
                         drop(read_txn);
@@ -168,7 +152,7 @@ impl AuraState {
                         let mut height_table = write_txn.open_table(HEIGHT_TABLE)?;
                         height_table.insert("current", 0u64)?;
                         write_txn.commit()?;
-                        Height(0)
+                        Height::from(0u64)
                     }
                 }
             }
@@ -178,7 +162,7 @@ impl AuraState {
                 let mut height_table = write_txn.create_table(HEIGHT_TABLE)?;
                 height_table.insert("current", 0u64)?;
                 write_txn.commit()?;
-                Height(0)
+                Height::from(0u64)
             }
         };
 

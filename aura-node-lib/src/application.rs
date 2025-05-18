@@ -4,9 +4,15 @@ use async_trait::async_trait;
 use tracing::info;
 
 // Import directly from the packages to avoid issues
-use crate::mbt_app::ApplicationService;
-use crate::mbt_app::PeerId as NodeId;
-use crate::mbt_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use tracing::info;
+
+// Import directly from crates
+use malachitebft_app::ApplicationService;
+use malachitebft_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
+use malachitebft_peer::PeerId as NodeId;
 
 use crate::{Error, Result, state::AuraState};
 
