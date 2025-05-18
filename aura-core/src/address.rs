@@ -1,23 +1,20 @@
 use crate::AURA_ADDR_HRP;
 use crate::error::CoreError;
-use bech32::{self, FromBase32, ToBase32, Variant};
+use bech32::{Bech32m, DecodeError, Fe32, Hrp, encode}; // Fe32 for 5-bit elements
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-// For BLS12-381, a compressed G1 point is 48 bytes.
-// If you add a version/type byte, it could be 49.
-// Let's assume for now the payload is just the compressed G1 point.
 pub const AURA_ADDRESS_PAYLOAD_LENGTH: usize = 48;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AuraAddress {
-    hrp: String,
-    payload: Vec<u8>, // Raw public key bytes (compressed BLS12-381 G1 point)
+    hrp_str: String,
+    payload: Vec<u8>, // 8-bit data
 }
 
 impl AuraAddress {
-    pub fn new(hrp: &str, payload: Vec<u8>) -> Result<Self, CoreError> {
+    pub fn new(hrp_str: &str, payload: Vec<u8>) -> Result<Self, CoreError> {
         if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
             return Err(CoreError::InvalidAddress(format!(
                 "Invalid payload length: expected {}, got {}",
@@ -25,32 +22,66 @@ impl AuraAddress {
                 payload.len()
             )));
         }
+        // Validate HRP string if needed
+        if Hrp::parse_unchecked(hrp_str).as_str() != hrp_str {
+            // Basic check
+            return Err(CoreError::InvalidAddress(format!(
+                "Invalid HRP characters in: {}",
+                hrp_str
+            )));
+        }
         Ok(AuraAddress {
-            hrp: hrp.to_string(),
+            hrp_str: hrp_str.to_string(),
             payload,
         })
     }
 
-    /// Creates an AuraAddress from compressed public key bytes.
-    pub fn from_pubkey_bytes(pubkey_bytes: &[u8], hrp: &str) -> Result<Self, CoreError> {
-        Self::new(hrp, pubkey_bytes.to_vec())
+    pub fn from_pubkey_bytes(pubkey_bytes: &[u8], hrp_str: &str) -> Result<Self, CoreError> {
+        Self::new(hrp_str, pubkey_bytes.to_vec())
     }
 
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
-    pub fn hrp(&self) -> &str {
-        &self.hrp
+    pub fn hrp_str(&self) -> &str {
+        &self.hrp_str
     }
+}
+
+fn u8_to_fe32_vec(data: &[u8]) -> Result<Vec<Fe32>, bech32::primitives::convert_bits::Error> {
+    let mut five_bit_payload = Vec::new();
+    bech32::primitives::convert_bits::convert_bits(data, 8, 5, true, &mut five_bit_payload)?;
+    five_bit_payload
+        .into_iter()
+        .map(Fe32::try_from)
+        .collect::<Result<Vec<Fe32>, _>>()
+        .map_err(|_| bech32::primitives::convert_bits::Error::InvalidPadding) // Or a more specific error
+}
+
+fn fe32_to_u8_vec(data_fe: &[Fe32]) -> Result<Vec<u8>, bech32::primitives::convert_bits::Error> {
+    let five_bit_data: Vec<u8> = data_fe.iter().map(|fe| fe.to_u8()).collect();
+    let mut eight_bit_payload = Vec::new();
+    bech32::primitives::convert_bits::convert_bits(
+        &five_bit_data,
+        5,
+        8,
+        false,
+        &mut eight_bit_payload,
+    )?;
+    Ok(eight_bit_payload)
 }
 
 impl fmt::Display for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Bech32m is generally preferred for new protocols over original Bech32
-        let encoded = bech32::encode(&self.hrp, self.payload.to_base32(), Variant::Bech32m)
-            .map_err(|_| fmt::Error)?;
-        write!(f, "{}", encoded)
+        let hrp = Hrp::parse_unchecked(&self.hrp_str);
+        match u8_to_fe32_vec(&self.payload) {
+            Ok(fe_payload) => {
+                let encoded = Bech32m::encode_str(&hrp, &fe_payload).map_err(|_| fmt::Error)?; // Convert encode::Error to fmt::Error
+                write!(f, "{}", encoded)
+            }
+            Err(_) => Err(fmt::Error), // Failed 8-to-5 bit conversion
+        }
     }
 }
 
@@ -64,21 +95,26 @@ impl FromStr for AuraAddress {
     type Err = CoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (hrp, data, variant) = bech32::decode(s)?;
-        if variant != Variant::Bech32m {
-            // Enforce Bech32m
-            return Err(CoreError::InvalidAddress(
-                "Invalid bech32 variant, expected Bech32m".to_string(),
-            ));
+        // bech32 v0.11 decode returns a Result<Hrpstring, DecodeError>
+        // Hrpstring has methods hrp(), data()
+        let (hrp_decoded, data_fe32, _variant) = bech32::decode(s).map_err(|e: DecodeError| {
+            CoreError::Bech32(format!("Bech32m decoding error: {}", e))
+        })?;
+
+        // Recheck variant if necessary, though decode with specific checksum (Bech32m) should ensure it.
+        // if variant != Bech32m::VARIANT { ... }
+
+        let payload = fe32_to_u8_vec(&data_fe32)
+            .map_err(|e| CoreError::Bech32(format!("Bech32 bit conversion error: {:?}", e)))?;
+
+        let hrp_str = hrp_decoded.as_str().to_string();
+
+        if hrp_str != AURA_ADDR_HRP {
+            // Optionally allow other HRPs if genesis might contain them
+            // For strict Aura addresses, this should be an error.
+            // tracing::warn!("Decoded address HRP '{}' does not match expected HRP '{}'", hrp_str, AURA_ADDR_HRP);
         }
-        // Allow flexibility in HRP for genesis if it contains non-native asset addresses,
-        // but for native Aura addresses, it should match.
-        // If strictly only Aura addresses, uncomment the check:
-        // if hrp != AURA_ADDR_HRP {
-        //     return Err(CoreError::InvalidAddress(format!("Invalid HRP: expected {}, got {}", AURA_ADDR_HRP, hrp)));
-        // }
-        let payload = Vec::<u8>::from_base32(&data)?;
-        // Re-validate length after decoding
+
         if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
             return Err(CoreError::InvalidAddress(format!(
                 "Invalid payload length after decoding: expected {}, got {}",
@@ -86,7 +122,7 @@ impl FromStr for AuraAddress {
                 payload.len()
             )));
         }
-        Ok(AuraAddress { hrp, payload })
+        Ok(AuraAddress { hrp_str, payload })
     }
 }
 

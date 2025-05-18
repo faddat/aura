@@ -7,7 +7,8 @@ edition = "2024"   # Using Rust 2024 edition
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
-thiserror = "1.0"                                  # Current stable is ~1.0.58
+thiserror = "2.0.12"
+bech32 = "0.11.0"                                  # Current stable is ~1.0.58
 anyhow = "1.0"
 # rand 0.8.5 (using rand_core 0.6.x) is typically compatible with arkworks 0.4.x and often 0.5.x too.
 # Verify if arkworks 0.5.0 has moved to a newer rand_core. If not, 0.8.5 is safe.
@@ -18,8 +19,6 @@ zeroize = { version = "1.8.1", features = ["zeroize_derive"] } # Latest stable
 sha2 = "0.10.8"
 blake2 = "0.10.6"
 
-# Address encoding
-bech32 = "0.11.0"
 
 # Seed phrases and key derivation
 bip39 = "2.1.0"

@@ -38,19 +38,41 @@ pub enum CoreError {
     Io(#[from] std::io::Error),
     #[error("Hex decoding error: {0}")]
     Hex(#[from] hex::FromHexError),
-    #[error("Bech32 encoding/decoding error: {0}")]
-    Bech32(#[from] bech32::Error),
+    #[error("Bech32 error: {0}")]
+    Bech32(String), // Catch-all for various bech32 sub-errors
     #[error("BIP39 error: {0}")]
-    Bip39(String), // Can't directly use bip39::Error as it's not exported nicely for thiserror
+    Bip39(#[from] bip39::Error), // bip39 v2.x Error implements std::error::Error
     #[error("Configuration error: {0}")]
     Config(String),
     #[error("Other error: {0}")]
     Other(String),
 }
 
-// Helper for Bip39 errors
-impl From<bip39::ErrorKind> for CoreError {
-    fn from(e: bip39::ErrorKind) -> Self {
-        CoreError::Bip39(format!("{:?}", e))
+// Specific bech32 error conversions
+impl From<bech32::DecodeError> for CoreError {
+    fn from(e: bech32::DecodeError) -> Self {
+        CoreError::Bech32(format!("Bech32 decode error: {}", e))
+    }
+}
+impl From<bech32::EncodeError> for CoreError {
+    fn from(e: bech32::EncodeError) -> Self {
+        CoreError::Bech32(format!("Bech32 encode error: {}", e))
+    }
+}
+impl From<bech32::primitives::hrp::Error> for CoreError {
+    // Hrp::parse can fail
+    fn from(e: bech32::primitives::hrp::Error) -> Self {
+        CoreError::Bech32(format!("Bech32 HRP error: {}", e))
+    }
+}
+impl From<bech32::primitives::gf32::Error> for CoreError {
+    // Fe32::try_from can fail
+    fn from(e: bech32::primitives::gf32::Error) -> Self {
+        CoreError::Bech32(format!("Bech32 GF32/Fe32 error: {}", e))
+    }
+}
+impl From<bech32::primitives::convert_bits::Error> for CoreError {
+    fn from(e: bech32::primitives::convert_bits::Error) -> Self {
+        CoreError::Bech32(format!("Bech32 bit conversion error: {:?}", e))
     }
 }
