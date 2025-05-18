@@ -23,6 +23,15 @@ For the love of god don't use this right now.  It is:
 
 But if you want to contribute, I'd love it!
 
+## Chain State
+
+Unless we choose another path, we'll be using the bech32 side (cosmos side) of "unicornandmemes.com".
+
+* My Snapshot
+  * QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr
+* Unity's Snapshot
+  * QmNyt5bh6KRgPukeH2XScdRnycn4pxHVyAdMKgrHVMktGX
+
 ## Approximate Layout
 
 ```txt
