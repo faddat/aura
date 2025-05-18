@@ -49,26 +49,11 @@ pub enum CoreError {
 }
 
 // Specific bech32 error conversions for v0.11
-impl From<bech32::Error> for CoreError {
-    // General bech32::Error
-    fn from(e: bech32::Error) -> Self {
-        CoreError::Bech32(format!("Bech32 generic error: {}", e))
-    }
-}
-// The previous From impls for sub-module errors might still be useful if you match on them,
-// but bech32::Error itself should cover decode/encode/hrp errors.
 impl From<bech32::primitives::hrp::Error> for CoreError {
     fn from(e: bech32::primitives::hrp::Error) -> Self {
         CoreError::Bech32(format!("Bech32 HRP error: {}", e))
     }
 }
-impl From<bech32::primitives::gf32::Error> for CoreError {
-    fn from(e: bech32::primitives::gf32::Error) -> Self {
-        CoreError::Bech32(format!("Bech32 GF32/Fe32 error: {}", e))
-    }
-}
-impl From<bech32::primitives::convert_bits::Error> for CoreError {
-    fn from(e: bech32::primitives::convert_bits::Error) -> Self {
-        CoreError::Bech32(format!("Bech32 bit conversion error: {:?}", e))
-    }
-}
+
+// Removed deprecated bech32 error conversions (gf32::Error, convert_bits::Error) as the
+// current implementation no longer exposes these error types directly.

@@ -3,19 +3,19 @@ use crate::{AURA_ADDR_HRP, AuraAddress, CurveFr, CurveG1};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger as ArkBigInteger, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use bip39::{Mnemonic, Seed as ActualBip39Seed}; // bip39::Seed is correct for v2.x
-// Language is no longer a separate import, methods on Mnemonic take it if needed, or default to English.
-use rand::rngs::OsRng;
-use serde::{Deserialize, Serialize}; // For Signature struct
+use ark_std::rand::{SeedableRng, rngs::StdRng};
+use bip39::{Language, Mnemonic};
+use rand::{Rng, RngCore, rngs::OsRng};
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 #[derive(Clone, Zeroize)]
 #[zeroize(drop)]
-pub struct Seed(ActualBip39Seed);
+pub struct Seed(pub [u8; 64]);
 
 impl Seed {
     pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        &self.0
     }
 }
 
@@ -24,25 +24,29 @@ pub struct SeedPhrase(Mnemonic);
 
 impl SeedPhrase {
     pub fn new_random() -> Result<Self, CoreError> {
-        // Mnemonic::builder().word_count(12).build_random() // or Mnemonic::random(count)
-        // bip39 v2.x, `Mnemonic::new` for random, `Mnemonic::from_phrase` to parse
-        let mnemonic = Mnemonic::new(bip39::WordCount::Words12, bip39::Language::English);
+        let mut entropy = [0u8; 16];
+        OsRng.fill_bytes(&mut entropy);
+
+        let mnemonic = Mnemonic::from_entropy(&entropy)
+            .map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
         Ok(SeedPhrase(mnemonic))
     }
 
     pub fn from_str(phrase: &str) -> Result<Self, CoreError> {
-        let mnemonic =
-            Mnemonic::from_phrase(phrase, bip39::Language::English).map_err(CoreError::from)?;
+        let mnemonic = Mnemonic::parse_in_normalized(Language::English, phrase)
+            .map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
         Ok(SeedPhrase(mnemonic))
     }
 
-    pub fn as_str(&self) -> &str {
-        // Mnemonic in bip39 v2.1 provides as_str()
-        self.0.as_str()
+    pub fn as_str(&self) -> String {
+        self.0.to_string()
     }
 
     pub fn to_seed(&self) -> Seed {
-        Seed(ActualBip39Seed::new(&self.0, ""))
+        let seed_bytes = self.0.to_seed("");
+        let mut array = [0u8; 64];
+        array.copy_from_slice(&seed_bytes[0..64]);
+        Seed(array)
     }
 }
 
@@ -87,8 +91,7 @@ pub struct PublicKey(pub CurveG1);
 
 impl PublicKey {
     pub fn from_private(sk: &PrivateKey) -> Self {
-        // ark-ec 0.5.0
-        let generator_affine = <CurveG1 as CurveGroup>::Affine::generator(); // Use generator() for the prime subgroup generator
+        let generator_affine = <CurveG1 as CurveGroup>::Affine::generator();
         let generator_projective: CurveG1 = generator_affine.into();
         PublicKey(generator_projective * sk.0)
     }

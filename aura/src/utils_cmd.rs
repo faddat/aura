@@ -30,7 +30,9 @@ pub async fn handle_utils_command(
                 genesis_path
             );
         }
-        UtilsCommands::KeyFromSeed { seed_phrase } => {
+        UtilsCommands::KeyFromSeed {
+            seed_phrase: _seed_phrase,
+        } => {
             tracing::info!("Deriving key from seed phrase...");
             // Call aura_core::keys::derive_address_from_seed(&seed_phrase)
             // This should print the Aura address and maybe public key

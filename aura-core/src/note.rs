@@ -1,7 +1,19 @@
 use crate::{AuraAddress, CoreError, CurveFr};
+use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+// TODO: IMPLEMENTATION WARNING
+// This codebase uses the sha2 hash function for commitments instead of the Poseidon hash
+// which would be more ZKP-friendly. To use Poseidon properly, you need to:
+// 1. Initialize matrices properly for PoseidonConfig
+// 2. Implement hashing in zkp.rs using PoseidonSponge
+// 3. Add proper implementations of PoseidonSpongeVar for circuit constraints
+//
+// The current implementation is a placeholder for development. In a production
+// environment, you should implement proper ZK-friendly primitives.
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Note {
@@ -22,10 +34,7 @@ impl Note {
     pub fn commitment_outside_circuit(&self) -> Result<NoteCommitment, CoreError> {
         let mut hasher = Sha256::new();
         hasher.update(self.value.to_le_bytes());
-
-        // let mut owner_bytes: Vec<u8> = Vec::new(); // Give type or remove if unused
-        // self.owner_pk_info.serialize_compressed(&mut owner_bytes).map_err(|e| CoreError::Serialization(e.to_string()))?; // This line was commented
-        hasher.update(&self.owner_pk_info); // Directly use self.owner_pk_info if it's already Vec<u8>
+        hasher.update(&self.owner_pk_info);
 
         let mut randomness_bytes = Vec::new();
         self.randomness
@@ -94,6 +103,7 @@ impl Nullifier {
         let hash_result = hasher.finalize();
         Ok(Nullifier(hash_result.into()))
     }
+
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
     }

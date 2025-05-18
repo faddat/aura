@@ -27,7 +27,7 @@ pub async fn handle_node_command(
         NodeCommands::Start { seed_phrase } => {
             tracing::info!("Starting Aura node...");
             tracing::debug!("Node configuration: {:?}", app_config.node);
-            if let Some(ref sp) = seed_phrase {
+            if let Some(ref _sp) = seed_phrase {
                 tracing::info!("Using provided seed phrase for node identity.");
                 // Here you would pass the seed phrase and app_config.node to aura_node_lib
                 // e.g., aura_node_lib::start_node(app_config.node.clone(), Some(sp.clone())).await?;

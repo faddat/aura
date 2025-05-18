@@ -40,7 +40,7 @@ pub enum WalletCommands {
 
 pub async fn handle_wallet_command(
     commands: WalletCommands,
-    app_config: &AuraAppConfig,
+    _app_config: &AuraAppConfig,
     _config_path: &PathBuf,
 ) -> Result<()> {
     match commands {
