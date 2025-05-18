@@ -4,11 +4,9 @@ use async_trait::async_trait;
 use tracing::info;
 
 // Import directly from the packages to avoid issues
-use informalsystems_malachitebft_app::ApplicationService;
-use informalsystems_malachitebft_app::PeerId as NodeId;
-use informalsystems_malachitebft_core_types::{
-    Height, Round, Signature, Value as Block, ValueId as BlockId,
-};
+use crate::mbt_app::ApplicationService;
+use crate::mbt_app::PeerId as NodeId;
+use crate::mbt_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
 
 use crate::{Error, Result, state::AuraState};
 
