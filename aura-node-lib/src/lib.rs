@@ -20,6 +20,10 @@ pub use application::AuraApplication;
 pub use config::AuraNodeConfig;
 pub use state::AuraState;
 
+// Make sure node module is used
+#[allow(unused_imports)]
+use self::node::{AuraState as NodeAuraState, Block};
+
 /// Represents the state of the Aura node
 #[derive(Debug)]
 pub struct AuraNodeState {

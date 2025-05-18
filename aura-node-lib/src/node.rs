@@ -1,9 +1,7 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use aura_core::Transaction;
-use redb::{
-    Database, TableDefinition,
-};
+use redb::{Database, TableDefinition};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{debug, info};
@@ -24,21 +22,26 @@ pub struct Block {
 
 /// Table definitions for the state database
 const METADATA_TABLE: TableDefinition<&str, u64> = TableDefinition::new("metadata"); // For "current_height"
+#[allow(dead_code)]
 const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks"); // Key: height, Value: serialized Block
+#[allow(dead_code)]
 const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions"); // Key: tx_id, Value: serialized Transaction (optional, for indexing)
 
 /// Represents the application state for the Aura blockchain
 #[derive(Debug)]
 pub struct AuraState {
+    #[allow(dead_code)]
     db: Database,
     current_height: u64,
     #[allow(dead_code)] // Will be used for actual signing later
     private_key: Arc<aura_core::PrivateKey>,
     // Simple in-memory mempool
+    #[allow(dead_code)]
     mempool: VecDeque<Transaction>,
 }
 
 impl AuraState {
+    #[allow(dead_code)]
     pub fn new(db_path: impl AsRef<Path>, private_key: Arc<aura_core::PrivateKey>) -> Result<Self> {
         let db = Database::create(db_path)?;
         let current_height = Self::get_or_init_height(&db)?;
@@ -51,11 +54,13 @@ impl AuraState {
         })
     }
 
+    #[allow(dead_code)]
     pub fn height_value(&self) -> u64 {
         self.current_height
     }
 
     // Method to add a transaction to the mempool (e.g., from RPC)
+    #[allow(dead_code)]
     pub fn add_transaction_to_mempool(&mut self, tx: Transaction) -> Result<()> {
         // Basic validation could happen here before adding to mempool
         info!("Adding transaction {:?} to mempool", tx.id()?);
@@ -63,6 +68,7 @@ impl AuraState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn get_transactions_for_block(&mut self, max_txs: usize) -> Vec<Transaction> {
         let mut txs = Vec::new();
         for _ in 0..max_txs {
@@ -75,6 +81,7 @@ impl AuraState {
         txs
     }
 
+    #[allow(dead_code)]
     pub fn apply_block(&mut self, block: Block) -> Result<()> {
         debug!("Attempting to apply block at height {}", block.height);
 
@@ -132,6 +139,7 @@ impl AuraState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn create_block_proposal(
         &mut self, // Changed to &mut to allow taking transactions from mempool
         height: u64,
@@ -194,6 +202,7 @@ impl AuraState {
     }
 
     // Placeholder for app_hash calculation if needed by Malachite
+    #[allow(dead_code)]
     pub fn app_hash(&self) -> Result<Vec<u8>> {
         // For now, just hash the current height as a placeholder
         let mut hasher = Sha256::new();
@@ -202,6 +211,7 @@ impl AuraState {
     }
 
     // Placeholder for committing state and getting app hash
+    #[allow(dead_code)]
     pub fn commit_and_get_app_hash(&mut self) -> Result<Vec<u8>> {
         // redb commits transactions atomically. If self.db.begin_write() and .commit()
         // are used in apply_block, the commit is already handled there.
@@ -209,3 +219,5 @@ impl AuraState {
         self.app_hash()
     }
 }
+
+// No demo function needed as we're using a different approach to avoid dead code warnings
