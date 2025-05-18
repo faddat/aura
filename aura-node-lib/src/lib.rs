@@ -10,6 +10,14 @@ pub use malachitebft_core_types;
 pub use malachitebft_engine;
 pub use malachitebft_peer;
 
+// Create a types module for convenient re-exports
+pub mod types {
+    pub use malachitebft_core_types::{
+        Height, Round, Signature, Value as Block, ValueId as BlockId,
+    };
+    pub use malachitebft_peer::PeerId as NodeId;
+}
+
 mod application;
 mod config;
 mod node;

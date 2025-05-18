@@ -1,14 +1,15 @@
 use std::{path::Path, sync::Arc};
 
-use aura_core::Transaction;
 use redb::{Database, ReadableTable, TableDefinition};
+use serde_json;
 use tracing::{debug, info};
 
-// Import directly from crates
-use malachitebft_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
-use malachitebft_peer::PeerId as NodeId;
-
+// Import from our types module
+use crate::types::{Block, BlockId, Height, NodeId, Round, Signature};
 use crate::{Error, Result};
+
+// Import the peer module
+use malachitebft_peer;
 
 /// Table definitions for the state database
 const HEIGHT_TABLE: TableDefinition<&str, u64> = TableDefinition::new("height");
@@ -22,7 +23,7 @@ pub struct AuraState {
     /// State database
     db: Database,
     /// Current blockchain height
-    current_height: Height,
+    current_height: u64,
     /// Private key for signing blocks (would typically come from secure storage)
     private_key: Arc<aura_core::PrivateKey>,
 }
@@ -44,18 +45,19 @@ impl AuraState {
 
     /// Get the current blockchain height
     pub fn height(&self) -> Height {
-        self.current_height
+        Height::from(self.current_height)
     }
 
     /// Apply a block to the state
     pub fn apply_block(&mut self, block: Block) -> Result<()> {
-        debug!("Applying block at height {}", block.header.height);
+        debug!("Applying block at height {}", block.height);
 
         // Verify block height is next in sequence
-        if block.header.height != self.current_height + 1 {
+        if block.height.value() != self.current_height + 1 {
             return Err(Error::State(format!(
                 "Block height {} is not next in sequence after current height {}",
-                block.header.height, self.current_height
+                block.height.value(),
+                self.current_height
             )));
         }
 
@@ -72,19 +74,19 @@ impl AuraState {
             let mut blocks_table = write_txn.open_table(BLOCKS_TABLE)?;
             let block_bytes = serde_json::to_vec(&block)
                 .map_err(|e| Error::Other(format!("Failed to serialize block: {}", e)))?;
-            blocks_table.insert(block.header.height.0, block_bytes.as_slice())?;
+            blocks_table.insert(block.height.value(), block_bytes.as_slice())?;
 
             // Update current height
             let mut height_table = write_txn.open_table(HEIGHT_TABLE)?;
-            height_table.insert("current", block.header.height.0)?;
+            height_table.insert("current", block.height.value())?;
 
-            self.current_height = block.header.height;
+            self.current_height = block.height.value();
         }
 
         // Commit the transaction
         write_txn.commit()?;
 
-        info!("Applied block at height {}", block.header.height);
+        info!("Applied block at height {}", block.height);
         Ok(())
     }
 
@@ -95,13 +97,8 @@ impl AuraState {
         round: Round,
         node_id: NodeId,
     ) -> Result<Block> {
-        // In a real implementation, this would:
-        // 1. Gather transactions from mempool
-        // 2. Create a properly structured block with transactions
-        // 3. Include necessary metadata
-
-        // This is a simplified placeholder - create an empty block value
-        let data = Vec::new(); // Empty data for now
+        // This is a simplified placeholder
+        let data = Vec::new(); // Empty block data for now
         let block = Block::new(height, round, node_id, data);
 
         Ok(block)
@@ -114,8 +111,8 @@ impl AuraState {
         // 2. Sign using the node's private key
         // 3. Return the signature in the format expected by Malachite
 
-        // This is a simplified placeholder
-        let signature = Signature::default(); // Replace with actual signing
+        // This is a simplified placeholder, just return a default
+        let signature = Signature::dummy();
 
         Ok(signature)
     }
@@ -133,18 +130,18 @@ impl AuraState {
         // 1. Verify the signature against the signer's public key
         // 2. Ensure the signature is valid for the provided block_id
 
-        // This is a simplified placeholder
+        // This is a simplified placeholder that always succeeds
         Ok(())
     }
 
     /// Get the current height or initialize to 0 if not set
-    fn get_or_init_height(db: &Database) -> Result<Height> {
+    fn get_or_init_height(db: &Database) -> Result<u64> {
         let read_txn = db.begin_read()?;
 
         let height = match read_txn.open_table(HEIGHT_TABLE) {
             Ok(table) => {
                 match table.get("current")? {
-                    Some(height) => Height::from(height),
+                    Some(height) => height,
                     None => {
                         // Height not set, initialize to 0
                         drop(read_txn);
@@ -152,7 +149,7 @@ impl AuraState {
                         let mut height_table = write_txn.open_table(HEIGHT_TABLE)?;
                         height_table.insert("current", 0u64)?;
                         write_txn.commit()?;
-                        Height::from(0u64)
+                        0
                     }
                 }
             }
@@ -162,7 +159,7 @@ impl AuraState {
                 let mut height_table = write_txn.create_table(HEIGHT_TABLE)?;
                 height_table.insert("current", 0u64)?;
                 write_txn.commit()?;
-                Height::from(0u64)
+                0
             }
         };
 
