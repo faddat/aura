@@ -32,7 +32,7 @@ impl SeedPhrase {
         Ok(SeedPhrase(mnemonic))
     }
 
-    pub fn from_str(phrase: &str) -> Result<Self, CoreError> {
+    pub fn parse_phrase(phrase: &str) -> Result<Self, CoreError> {
         let mnemonic = Mnemonic::parse_in_normalized(Language::English, phrase)
             .map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
         Ok(SeedPhrase(mnemonic))
@@ -72,7 +72,7 @@ impl PrivateKey {
     }
 
     pub fn from_seed_phrase_str(phrase: &str) -> Result<Self, CoreError> {
-        let seed_phrase_obj = SeedPhrase::from_str(phrase)?;
+        let seed_phrase_obj = SeedPhrase::parse_phrase(phrase)?;
         let bip39_seed = seed_phrase_obj.to_seed();
         Self::from_seed(&bip39_seed)
     }
@@ -113,7 +113,7 @@ pub struct Signature {
 pub fn generate_keypair_from_seed_phrase_str(
     phrase: &str,
 ) -> Result<(PrivateKey, PublicKey, AuraAddress), CoreError> {
-    let seed_phrase_obj = SeedPhrase::from_str(phrase)?;
+    let seed_phrase_obj = SeedPhrase::parse_phrase(phrase)?;
     let bip39_seed = seed_phrase_obj.to_seed();
     let sk = PrivateKey::from_seed(&bip39_seed)?;
     let pk = PublicKey::from_private(&sk);
