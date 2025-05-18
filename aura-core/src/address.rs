@@ -55,7 +55,7 @@ impl fmt::Display for AuraAddress {
 
 impl fmt::Debug for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AuraAddress({})", self.to_string())
+        write!(f, "AuraAddress({})", self)
     }
 }
 
