@@ -2,67 +2,41 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, error, info, warn, Instrument};
-use tokio::task::JoinHandle;
 use async_trait::async_trait;
 use eyre::eyre;
+use tokio::task::JoinHandle;
+use tracing::{Instrument, debug, error, info, warn};
 
+use crate::Result as AuraLibResult;
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
-use crate::Result as AuraLibResult;
 
 // --- Malachite App Channel Imports ---
 use malachitebft_app_channel::{
-    EngineHandle,
-    RxEvent,
-    TxEvent,
+    AppMsg, Channels, ConsensusMsg, EngineHandle, RxEvent, TxEvent,
     app::{
-        Context as MalachiteAppChannelContext,
-        Node as MalachiteAppChannelNode,
+        Context as MalachiteAppChannelContext, Node as MalachiteAppChannelNode,
         NodeHandle as MalachiteAppChannelNodeHandle,
-        types::{
-            Round,
-            core::{
-                Validator as MalachiteValidatorTrait,
-            },
-        },
+        types::{Round, core::Validator as MalachiteValidatorTrait},
     },
-    Channels,
-    AppMsg,
     start_engine as malachite_start_engine,
 };
 
 // --- Malachite Config ---
-use malachitebft_config::{
-    Config as MalachiteBftConfig,
-};
+use malachitebft_config::Config as MalachiteBftConfig;
 
 // --- Malachite Core Types ---
 use malachitebft_core_types::{
-    NodeKey,
-    crypto::PublicKey,
-    NilOrVal,
-    Round as MalachiteRound,
-    ValueId,
+    NilOrVal, NodeKey, Round as MalachiteRound, ValueId, crypto::PublicKey,
 };
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
-    Address as TestAddress,
-    Ed25519Provider,
-    Extension as TestExtension,
-    Genesis as TestGenesis,
-    Height as TestHeight,
-    Keypair as TestKeypair,
-    PrivateKey as TestPrivateKey,
-    Proposal as TestProposal,
-    ProposalPart as TestProposalPart,
-    PublicKey as TestPublicKey,
-    Validator as TestValidator,
-    ValidatorSet as TestValidatorSet,
-    Value as TestValue,
-    Vote as TestVote,
-    codec::proto::ProtobufCodec,
+    Address as TestAddress, Context as TestContext, Ed25519Provider, Extension as TestExtension,
+    Genesis as TestGenesis, Height as TestHeight, Keypair as TestKeypair,
+    PrivateKey as TestPrivateKey, Proposal as TestProposal, ProposalPart as TestProposalPart,
+    PublicKey as TestPublicKey, Validator as TestValidator, ValidatorSet as TestValidatorSet,
+    Value as TestValue, Vote as TestVote, codec::proto::ProtobufCodec,
 };
 
 // --- Placeholder for Malachite's Top-Level Config ---
@@ -85,7 +59,13 @@ impl MalachiteTopLevelConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct AuraMalachiteContext;
+pub struct AuraMalachiteContext(TestContext);
+
+impl Default for AuraMalachiteContext {
+    fn default() -> Self {
+        Self(TestContext::default())
+    }
+}
 
 impl MalachiteAppChannelContext for AuraMalachiteContext {
     type Address = TestAddress;
@@ -105,38 +85,7 @@ impl MalachiteAppChannelContext for AuraMalachiteContext {
         height: Self::Height,
         round: Round,
     ) -> &'a Self::Validator {
-        let total_power = validator_set.total_power();
-        if total_power == 0 {
-            panic!("Cannot select proposer from validator set with zero total power");
-        }
-        let seed = height.as_u64().wrapping_add(round.as_u32() as u64);
-        let mut proposer_index = 0;
-        let mut accumulated_power = 0u64;
-
-        let validators = validator_set.validators(); // Get slice of validators
-        if validators.is_empty() {
-            panic!("Validator set is empty, cannot select proposer.");
-        }
-
-        for (i, val) in validators.iter().enumerate() {
-            accumulated_power = accumulated_power.wrapping_add(val.power());
-            // Changed clippy suggestion from `>` to `>=` because `seed % total_power` can be 0
-            // and `+1` ensures we always pick someone if total_power > 0.
-            // If `seed % total_power` is 0, `(seed % total_power) + 1` is 1.
-            // Smallest accumulated_power can be (if first validator has power > 0) is val.power().
-            // This logic might need more careful review against Tendermint's actual weighted round robin.
-            if accumulated_power > (seed % total_power) {
-                proposer_index = i;
-                break;
-            }
-        }
-        validators.get(proposer_index).unwrap_or_else(|| {
-            // Fallback if something went wrong, though with total_power > 0 and validators non-empty, this shouldn't happen.
-            warn!("Proposer selection fallback to first validator.");
-            validators
-                .first()
-                .expect("Validator set confirmed non-empty but failed to get fallback proposer")
-        })
+        self.0.select_proposer(validator_set, height, round)
     }
 
     fn new_proposal(
@@ -146,9 +95,7 @@ impl MalachiteAppChannelContext for AuraMalachiteContext {
         pol_round: Round,
         address: Self::Address,
     ) -> Self::Proposal {
-        warn!(
-            "AuraMalachiteContext::new_proposal is using Aura block height as TestValue for TestProposal"
-        );
+        warn!("AuraMalachiteContext::new_proposal is using Aura block height");
         TestProposal::new(
             height,
             round,
@@ -177,11 +124,39 @@ impl MalachiteAppChannelContext for AuraMalachiteContext {
     }
 }
 
-impl MalachiteValidatorTrait for AuraState {
+impl MalachiteValidatorTrait<AuraMalachiteContext> for AuraState {
     type Id = u64;
     fn id(&self) -> Self::Id {
         self.height
     }
+
+    fn address(&self) -> <AuraMalachiteContext as MalachiteAppChannelContext>::Address {
+        TestAddress::new([0; 20]) // Default placeholder address
+    }
+
+    fn public_key(
+        &self,
+    ) -> <AuraMalachiteContext as MalachiteAppChannelContext>::SigningScheme::PublicKey {
+        Ed25519Provider::empty_public_key() // Use a placeholder public key
+    }
+
+    fn voting_power(&self) -> u64 {
+        1 // Default voting power
+    }
+}
+
+// Implement the core Context trait for AuraMalachiteContext
+impl informalsystems_malachitebft_core_types::Context for AuraMalachiteContext {
+    type Address = TestAddress;
+    type Height = TestHeight;
+    type ProposalPart = TestProposalPart;
+    type Proposal = TestProposal;
+    type Validator = TestValidator;
+    type ValidatorSet = TestValidatorSet;
+    type Value = AuraState;
+    type Vote = TestVote;
+    type Extension = TestExtension;
+    type SigningScheme = Ed25519Provider;
 }
 
 #[derive(Clone)]
@@ -276,7 +251,7 @@ impl MalachiteAppChannelNode for AuraNode {
             .map_err(|e| eyre!("Failed to parse genesis file {:?}: {}", genesis_path, e))
     }
 
-    async fn start(&self) -> eyre::Result<Self::NodeHandle> {
+    async fn start(&self) -> eyre::Result<<Self as MalachiteAppChannelNode>::NodeHandle> {
         info!("AuraNode (MalachiteNode impl) starting process...");
         let malachite_config = self.load_config()?;
 
@@ -286,7 +261,7 @@ impl MalachiteAppChannelNode for AuraNode {
         let priv_validator_key_file_content = self.load_private_key_file()?;
         let priv_validator_key = self.load_private_key(priv_validator_key_file_content);
 
-        let aura_malachite_ctx = AuraMalachiteContext;
+        let aura_malachite_ctx = AuraMalachiteContext(TestContext::default());
         let malachite_genesis = self.load_genesis()?;
         let initial_validator_set = malachite_genesis.validator_set.clone();
         info!(
@@ -336,10 +311,9 @@ impl MalachiteAppChannelNode for AuraNode {
             priv_validator_key,
             node_key,
             malachite_config.clone(),
-            None,
             initial_validator_set,
         )
-        .await?
+        .await?;
         info!("Malachite engine started via app-channel.");
 
         let tx_event_channel = channels.events.clone();
@@ -353,7 +327,7 @@ impl MalachiteAppChannelNode for AuraNode {
 
         Ok(AuraNodeRunningHandle {
             app_logic_handle,
-            engine: engine_handle,
+            engine_handle,
             tx_event: tx_event_channel,
         })
     }
