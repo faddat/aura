@@ -1,7 +1,7 @@
 use crate::config::AuraAppConfig;
 use anyhow::Result;
 use clap::Subcommand;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Subcommand, Debug)]
 pub enum UtilsCommands {
@@ -19,7 +19,7 @@ pub enum UtilsCommands {
 pub async fn handle_utils_command(
     commands: UtilsCommands,
     _app_config: &AuraAppConfig,
-    _config_path: &PathBuf,
+    _config_path: &Path,
 ) -> Result<()> {
     match commands {
         UtilsCommands::ParseGenesis {
