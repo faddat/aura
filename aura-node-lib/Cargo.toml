@@ -13,17 +13,21 @@ malachitebft-core-types = { git = "https://github.com/informalsystems/malachite"
 malachitebft-engine = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-engine" }
 malachitebft-config = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-config" }
 malachitebft-core-consensus = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-core-consensus" }
+malachitebft-app-channel = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-app-channel" }
+malachitebft-test = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-test" }
 malachitebft-peer = { git = "https://github.com/informalsystems/malachite", rev = "2e950b5", package = "informalsystems-malachitebft-peer" }
 libp2p = { version = "0.55.0", default-features = false, features = [
     "macros",
     "ed25519",
     "tokio",
 ] } # Example: minimal set for identity types
+toml = "0.8.22"
 
 # State Storage
 redb = "2.1.0"    # Or latest stable version
 hex = "0.4.3"
 chrono = "0.4.37" # For timestamp handling
+eyre = "0.6.12"
 
 # Async
 tokio = { version = "1", features = [
