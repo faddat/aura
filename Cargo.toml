@@ -1,5 +1,8 @@
 [workspace]
-members = ["aura", "aura-cli", "aura-core", "aura-node-lib", "aura-wallet-lib"]
+members = ["aura", "aura-core", "aura-node-lib", "aura-wallet-lib"]
+
+resolver = "2" # Recommended
+
 
 [profile.release]
 opt-level = "z"
