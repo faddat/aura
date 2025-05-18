@@ -450,7 +450,7 @@ impl ZkpHandler {
             CoreError::Deserialization(format!("Failed to deserialize proof: {}", e))
         })?;
 
-        Groth16::<AuraCurve>::verify_with_processed_vk(
+        Groth16::<AuraCurve>::verify_proof_with_prepared_inputs(
             prepared_verifying_key,
             public_inputs_as_fr,
             &proof,
