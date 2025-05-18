@@ -63,11 +63,11 @@ pub mod types {
     pub use crate::mbt_app::types::PeerId as NodeId;
 
     // Import from core_types
-    pub use crate::mbt_core_types::height::Height;
-    pub use crate::mbt_core_types::round::Round;
-    pub use crate::mbt_core_types::signing::Signature;
-    pub use crate::mbt_core_types::value::Value as Block;
-    pub use crate::mbt_core_types::vote::Vote;
+    pub use crate::mbt_core_types::Height;
+    pub use crate::mbt_core_types::Round;
+    pub use crate::mbt_core_types::Signature;
+    pub use crate::mbt_core_types::Value as Block;
+    pub use crate::mbt_core_types::Vote;
 }
 
 fn main() {
