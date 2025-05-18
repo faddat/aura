@@ -12,7 +12,7 @@ bech32 = "0.11.0"                                  # Current stable is ~1.0.58
 anyhow = "1.0"
 # rand 0.8.5 (using rand_core 0.6.x) is typically compatible with arkworks 0.4.x and often 0.5.x too.
 # Verify if arkworks 0.5.0 has moved to a newer rand_core. If not, 0.8.5 is safe.
-rand = "0.8.5"
+rand = "0.9.1"
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] } # Latest stable
 
 # Hashing

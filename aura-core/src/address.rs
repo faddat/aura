@@ -1,11 +1,19 @@
 use crate::AURA_ADDR_HRP;
 use crate::error::CoreError;
-use bech32::{Bech32m, DecodeError, Fe32, Hrp, encode}; // Fe32 for 5-bit elements
+use bech32::{self, Error as Bech32Error, FromBase32, ToBase32, Variant, u5};
+// For bech32 v0.11.0:
+use bech32::primitives::convert_bits::Error as ConvertBitsError;
+use bech32::primitives::decode::Error as DecodeError;
+use bech32::primitives::encode::Error as EncodeError;
+use bech32::primitives::gf32::Error as Gf32Error;
+use bech32::primitives::hrp::Error as HrpError;
+use bech32::{self, Bech32m, Error as Bech32LibError, Fe32, Hrp}; // Fe32 is u5
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 use std::str::FromStr;
 
-pub const AURA_ADDRESS_PAYLOAD_LENGTH: usize = 48;
+pub const AURA_ADDRESS_PAYLOAD_LENGTH: usize = 48; // For BLS12-381 G1 compressed
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct AuraAddress {
@@ -22,14 +30,8 @@ impl AuraAddress {
                 payload.len()
             )));
         }
-        // Validate HRP string if needed
-        if Hrp::parse_unchecked(hrp_str).as_str() != hrp_str {
-            // Basic check
-            return Err(CoreError::InvalidAddress(format!(
-                "Invalid HRP characters in: {}",
-                hrp_str
-            )));
-        }
+        Hrp::parse_unchecked(hrp_str); // Will panic on invalid HRP chars for parse_unchecked. Use Hrp::parse for Result.
+        // Hrp::parse(hrp_str).map_err(CoreError::from)?;
         Ok(AuraAddress {
             hrp_str: hrp_str.to_string(),
             payload,
@@ -49,38 +51,36 @@ impl AuraAddress {
     }
 }
 
-fn u8_to_fe32_vec(data: &[u8]) -> Result<Vec<Fe32>, bech32::primitives::convert_bits::Error> {
-    let mut five_bit_payload = Vec::new();
-    bech32::primitives::convert_bits::convert_bits(data, 8, 5, true, &mut five_bit_payload)?;
+fn u8_to_fe32_vec(data: &[u8]) -> Result<Vec<Fe32>, ConvertBitsError> {
+    let mut five_bit_payload: Vec<u8> = Vec::new(); // Must be Vec<u8> for convert_bits
+    bech32::convert_bits(data, 8, 5, true, &mut five_bit_payload)?;
     five_bit_payload
         .into_iter()
         .map(Fe32::try_from)
         .collect::<Result<Vec<Fe32>, _>>()
-        .map_err(|_| bech32::primitives::convert_bits::Error::InvalidPadding) // Or a more specific error
+        .map_err(|_: Gf32Error| ConvertBitsError::InvalidData) // Map Gf32Error
 }
 
-fn fe32_to_u8_vec(data_fe: &[Fe32]) -> Result<Vec<u8>, bech32::primitives::convert_bits::Error> {
+fn fe32_to_u8_vec(data_fe: &[Fe32]) -> Result<Vec<u8>, ConvertBitsError> {
     let five_bit_data: Vec<u8> = data_fe.iter().map(|fe| fe.to_u8()).collect();
     let mut eight_bit_payload = Vec::new();
-    bech32::primitives::convert_bits::convert_bits(
-        &five_bit_data,
-        5,
-        8,
-        false,
-        &mut eight_bit_payload,
-    )?;
+    bech32::convert_bits(&five_bit_data, 5, 8, false, &mut eight_bit_payload)?;
     Ok(eight_bit_payload)
 }
 
 impl fmt::Display for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hrp = Hrp::parse_unchecked(&self.hrp_str);
+        let hrp = Hrp::parse_unchecked(&self.hrp_str); // Assumes valid by construction in Self::new
         match u8_to_fe32_vec(&self.payload) {
             Ok(fe_payload) => {
-                let encoded = Bech32m::encode_str(&hrp, &fe_payload).map_err(|_| fmt::Error)?; // Convert encode::Error to fmt::Error
-                write!(f, "{}", encoded)
+                // bech32::encode takes Hrp and &[Fe32] and the variant is part of the type (Bech32m)
+                let b = Bech32m; // Checksum type
+                let encoded_str = b
+                    .encode_str(&hrp, &fe_payload)
+                    .map_err(|_: EncodeError| fmt::Error)?;
+                write!(f, "{}", encoded_str)
             }
-            Err(_) => Err(fmt::Error), // Failed 8-to-5 bit conversion
+            Err(_) => Err(fmt::Error),
         }
     }
 }
@@ -95,24 +95,23 @@ impl FromStr for AuraAddress {
     type Err = CoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // bech32 v0.11 decode returns a Result<Hrpstring, DecodeError>
-        // Hrpstring has methods hrp(), data()
-        let (hrp_decoded, data_fe32, _variant) = bech32::decode(s).map_err(|e: DecodeError| {
-            CoreError::Bech32(format!("Bech32m decoding error: {}", e))
-        })?;
+        // bech32::decode takes a &str and returns Result<(Hrp, Vec<Fe32>, Variant), DecodeError>
+        let (hrp_decoded, data_fe32, variant_decoded) =
+            bech32::decode(s).map_err(CoreError::from)?;
 
-        // Recheck variant if necessary, though decode with specific checksum (Bech32m) should ensure it.
-        // if variant != Bech32m::VARIANT { ... }
+        if variant_decoded != Bech32m::VARIANT {
+            return Err(CoreError::InvalidAddress(
+                "Decoded variant is not Bech32m".to_string(),
+            ));
+        }
 
-        let payload = fe32_to_u8_vec(&data_fe32)
-            .map_err(|e| CoreError::Bech32(format!("Bech32 bit conversion error: {:?}", e)))?;
+        let payload = fe32_to_u8_vec(&data_fe32).map_err(CoreError::from)?;
 
         let hrp_str = hrp_decoded.as_str().to_string();
 
         if hrp_str != AURA_ADDR_HRP {
-            // Optionally allow other HRPs if genesis might contain them
-            // For strict Aura addresses, this should be an error.
-            // tracing::warn!("Decoded address HRP '{}' does not match expected HRP '{}'", hrp_str, AURA_ADDR_HRP);
+            // Optionally handle other HRPs
+            // For strict Aura addresses, this could be an error.
         }
 
         if payload.len() != AURA_ADDRESS_PAYLOAD_LENGTH {
