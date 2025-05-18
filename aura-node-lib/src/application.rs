@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tracing::info;
 
 // Import directly from crates
-use malachitebft_app::ApplicationService;
+use malachitebft_app::engine::ApplicationService;
 use malachitebft_core_types::{Height, Round, Signature, Value as Block, ValueId as BlockId};
 use malachitebft_peer::PeerId as NodeId;
 
