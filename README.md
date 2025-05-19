@@ -17,7 +17,7 @@ magical, simple private currency in rust
 ### set up keys
 
 ```bash
-cargo run -p aura -- keygen --home ./devnet
+cargo run -p aura -- SingleNodeTestnet
 ```
 
 ### config file
