@@ -140,14 +140,7 @@ async fn main() -> Result<()> {
             if !genesis_path.exists() {
                 fs::write(
                     &genesis_path,
-                    r#"{
-  "height": 0,
-  "time": "2025-01-01T00:00:00Z",
-  "app_hash": "",
-  "validator_set": [],
-  "consensus_params": {}
-}
-+"#,
+                    r#"{\n  \"height\": 0,\n  \"time\": \"2025-01-01T00:00:00Z\",\n  \"app_hash\": \"\",\n  \"validator_set\": [],\n  \"consensus_params\": {}\n}\n"#,
                 )?;
             }
 
