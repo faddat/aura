@@ -308,18 +308,47 @@ pubsub_max_size = "4MiB"
 
                 let mal_cfg_path = node_dir.join("malachite.toml");
 
-                let tpl = format!(
-                    r#"moniker = "node-{idx}"
-home = "{home}"
-genesis_file = "genesis.json"
-priv_validator_key_file = "node_key.json"
-node_key_file = "node_key.json"
+                #[derive(Serialize)]
+                struct MalachiteConfig {
+                    moniker: String,
+                    home: String,
+                    genesis_file: String,
+                    priv_validator_key_file: String,
+                    node_key_file: String,
+                    p2p: P2PConfig,
+                }
 
-[p2p]
-listen_addr = "{listen}"
-persistent_peers = [{peers}]
-protocol = {{ type = "broadcast" }}
-rpc_max_size = "10MiB"
+                #[derive(Serialize)]
+                struct P2PConfig {
+                    listen_addr: String,
+                    persistent_peers: Vec<String>,
+                    protocol: ProtocolConfig,
+                    rpc_max_size: String,
+                }
+
+                #[derive(Serialize)]
+                struct ProtocolConfig {
+                    #[serde(rename = "type")]
+                    protocol_type: String,
+                }
+
+                let config = MalachiteConfig {
+                    moniker: format!("node-{idx}"),
+                    home: node_dir.to_string_lossy().to_string(),
+                    genesis_file: "genesis.json".to_string(),
+                    priv_validator_key_file: "node_key.json".to_string(),
+                    node_key_file: "node_key.json".to_string(),
+                    p2p: P2PConfig {
+                        listen_addr: listen_addr.clone(),
+                        persistent_peers: persistent.clone(),
+                        protocol: ProtocolConfig {
+                            protocol_type: "broadcast".to_string(),
+                        },
+                        rpc_max_size: "10MiB".to_string(),
+                    },
+                };
+
+                let tpl = toml::to_string(&config)?;
 pubsub_max_size = "4MiB"
 
 [consensus]
