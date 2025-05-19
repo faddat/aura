@@ -74,6 +74,8 @@ Unless we choose another path, we'll be using the bech32 side (cosmos side) of "
   * QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr
 * Unity's Snapshot
   * QmNyt5bh6KRgPukeH2XScdRnycn4pxHVyAdMKgrHVMktGX
+ 
+Instead of forcing users to go out and get genesis on their own, Aura will automagically download a snapshot, do a bech32 conversion, and create genesis on its own.  This is designed to be a very easy process for cosmos-sdk blockchains, and may support Solana in the future. 
 
 ## Approximate Layout
 
