@@ -396,3 +396,20 @@ fn msg_type_name(msg: &AppMsg<TestContext>) -> &'static str {
         _ => "UnknownAppMsg",
     }
 }
+
+impl AuraNode {
+    /// Create a new AuraNode instance used by external crates / CLI.
+    pub fn new(
+        home_dir: PathBuf,
+        aura_app_config: AuraAppNodeConfig,
+        malachite_config_path: PathBuf,
+        private_key: Arc<aura_core::PrivateKey>,
+    ) -> Self {
+        Self {
+            home_dir,
+            aura_app_config,
+            malachite_config_path,
+            _app_level_private_key: private_key,
+        }
+    }
+}
