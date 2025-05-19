@@ -542,6 +542,7 @@ dependencies = [
  "aura-wallet-lib",
  "clap",
  "config 0.15.11",
+ "hex",
  "serde",
  "serde_json",
  "shellexpand",

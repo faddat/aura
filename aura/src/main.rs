@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use hex;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 mod config;
@@ -38,6 +39,12 @@ enum Commands {
     Utils(utils_cmd::UtilsCommands),
     /// Initialize Aura configuration
     InitConfig,
+    /// Generate a new node private key and save it under <home>/node_key.json
+    Keygen {
+        /// Home directory where the key file will be written
+        #[clap(long)]
+        home: std::path::PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -71,11 +78,37 @@ async fn main() -> Result<()> {
     let app_config = AuraAppConfig::load_or_init(&config_path)?;
     tracing::debug!("Loaded application config: {:?}", app_config);
 
-
     match cli.command {
-        Commands::Node(node_commands) => node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?,
-        Commands::Wallet(wallet_commands) => wallet_cmd::handle_wallet_command(wallet_commands, &app_config, &config_path).await?,
-        Commands::Utils(utils_commands) => utils_cmd::handle_utils_command(utils_commands, &app_config, &config_path).await?,
+        Commands::Keygen { home } => {
+            use aura_core::keys::PrivateKey;
+            use serde::Serialize;
+
+            #[derive(Serialize)]
+            struct KeyFile {
+                private_key_hex: String,
+            }
+
+            std::fs::create_dir_all(&home)?;
+            let sk = PrivateKey::new_random();
+            let key_hex = hex::encode(sk.to_bytes_be());
+            let key_path = home.join("node_key.json");
+            std::fs::write(
+                &key_path,
+                serde_json::to_vec_pretty(&KeyFile {
+                    private_key_hex: key_hex,
+                })?,
+            )?;
+            println!("Node key written to {}", key_path.display());
+        }
+        Commands::Node(node_commands) => {
+            node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?
+        }
+        Commands::Wallet(wallet_commands) => {
+            wallet_cmd::handle_wallet_command(wallet_commands, &app_config, &config_path).await?
+        }
+        Commands::Utils(utils_commands) => {
+            utils_cmd::handle_utils_command(utils_commands, &app_config, &config_path).await?
+        }
         Commands::InitConfig => unreachable!(), // Handled above
     }
 

@@ -1,0 +1,17 @@
+moniker = "solo-validator"
+home = "."
+genesis_file = "genesis.json"             # see next step
+priv_validator_key_file = "node_key.json" # we just created it
+node_key_file = "node_key.json"           # same file is fine
+
+[p2p]
+listen_addr = "/ip4/0.0.0.0/tcp/26656"
+external_addr = ""
+seeds = []
+
+[consensus]
+# → all values are the defaults Malachite expects
+timeout_propose_ms = 3000
+timeout_prevote_ms = 1000
+timeout_precommit_ms = 1000
+timeout_commit_ms = 1000
