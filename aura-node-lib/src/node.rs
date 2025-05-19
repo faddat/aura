@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 use tracing::{Instrument, debug, error, info, warn};
 
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
-use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
+use crate::state::AuraState;
 
 // --- Malachite App Imports ---
 use malachitebft_app::events::{RxEvent, TxEvent};
@@ -34,11 +34,8 @@ use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
-    Address as TestAddress, Ed25519Provider, Extension as TestExtension, Genesis as TestGenesis,
-    Height as TestHeight, PrivateKey as TestPrivateKey, Proposal as TestProposal,
-    ProposalPart as TestProposalPart, PublicKey as TestPublicKey, TestContext,
-    Validator as TestValidator, ValidatorSet as TestValidatorSet, Value as TestValue,
-    Vote as TestVote, codec::proto::ProtobufCodec,
+    Address as TestAddress, Ed25519Provider, Genesis as TestGenesis,
+    Height as TestHeight, PrivateKey as TestPrivateKey, PublicKey as TestPublicKey, TestContext, ValidatorSet as TestValidatorSet, Value as TestValue, codec::proto::ProtobufCodec,
 };
 
 // --- Placeholder for Malachite's Top-Level Config ---
@@ -72,7 +69,7 @@ impl NodeConfig for MalachiteTopLevelConfig {
     fn value_sync(&self) -> &ValueSyncConfig {
         // Since we don't have a value_sync field, we need to return a default one
         static DEFAULT_VALUE_SYNC: once_cell::sync::Lazy<ValueSyncConfig> =
-            once_cell::sync::Lazy::new(|| ValueSyncConfig::default());
+            once_cell::sync::Lazy::new(ValueSyncConfig::default);
         &DEFAULT_VALUE_SYNC
     }
 }
@@ -187,7 +184,7 @@ impl MalachiteAppNode for AuraNode {
         let codec = ProtobufCodec;
 
         let app_state_db_path = self.get_home_dir().join(
-            &self
+            self
                 .aura_app_config
                 .db_path
                 .file_name()
@@ -201,7 +198,7 @@ impl MalachiteAppNode for AuraNode {
         info!("Calling malachitebft_app_channel::start_engine...");
         let (channels, engine_handle) = malachite_start_engine(
             aura_malachite_ctx.clone(),
-            codec.clone(),
+            codec,
             self.clone(),
             malachite_config.clone(),
             None,
@@ -248,7 +245,7 @@ async fn app_message_loop(
                 debug!("AppLoop: Received AppMsg from consensus: {}", msg_type_name(&msg));
                 match msg {
                     AppMsg::ConsensusReady { reply, .. } => {
-                        let mut state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for ConsensusReady: {}", e))?;
+                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for ConsensusReady: {}", e))?;
                         let start_height = if state.height_value() == 0 {
                             TestHeight::new(1)
                         } else {
