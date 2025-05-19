@@ -1,6 +1,5 @@
 use crate::config::AuraAppConfig;
 use anyhow::{Context, Result};
-use aura_node_lib::malachitebft_app::node::Node as MalachiteAppNodeTrait;
 use clap::Subcommand;
 use std::path::Path;
 use std::sync::Arc; // Required for Arc::new
@@ -98,7 +97,8 @@ pub async fn handle_node_command(
                 Arc::new(node_sk),
             );
 
-            MalachiteAppNodeTrait::run(aura_node)
+            aura_node
+                .run()
                 .await
                 .map_err(|e| anyhow::anyhow!("AuraNode run exited: {}", e))?;
 
