@@ -331,12 +331,12 @@ async fn app_message_loop(
                         };
                         info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
 
-                        // Key the buffer by the raw StreamId bytes to avoid trait bounds issues.
-                        let stream_key = format!("{:?}", part.stream_id);
+                        // Key the buffer directly by StreamId for stability and efficiency.
+                        let stream_key = part.stream_id.clone();
 
                         match &part.content {
                             StreamContent::Data(ProposalPart::Init(init)) => {
-                                proposal_buffers.insert(stream_key.clone(), (init.height, init.round, init.proposer));
+                                proposal_buffers.insert(stream_key, (init.height, init.round, init.proposer));
                                 if reply.send(None).is_err() {
                                     error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
                                 }
