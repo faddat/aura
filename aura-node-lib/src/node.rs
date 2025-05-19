@@ -336,13 +336,13 @@ async fn app_message_loop(
 
                         match &part.content {
                             StreamContent::Data(ProposalPart::Init(init)) => {
-                                proposal_buffers.insert(stream_key, (init.height, init.round, init.proposer));
+proposal_buffers.insert(stream_key.to_string(), (init.height, init.round, init.proposer));
                                 if reply.send(None).is_err() {
                                     error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
                                 }
                             }
                             StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
-                                if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key) {
+if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_string()) {
                                     // Reconstruct placeholder value identical to proposer's.
                                     let placeholder_value = TestValue::new(height.as_u64());
                                     let proposed = ProposedValue {
