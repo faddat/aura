@@ -1,4 +1,5 @@
 use anyhow::Result;
+use ark_std::rand::SeedableRng;
 use clap::Parser;
 use serde::Serialize;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
@@ -141,7 +142,7 @@ async fn main() -> Result<()> {
                 use aura_node_lib::malachitebft_test::PrivateKey as MalPriv;
                 // Always (re)write the key in malachite-compatible JSON format to avoid legacy
                 // hex key formats that this devnet no longer supports.
-                let priv_key = MalPriv::generate(rand::thread_rng());
+                let priv_key = MalPriv::generate(ark_std::rand::rngs::StdRng::from_entropy());
                 fs::write(&key_path, serde_json::to_vec_pretty(&priv_key)?)?;
             }
 
@@ -263,7 +264,7 @@ pubsub_max_size = "4MiB"
                 let priv_key: MalPriv = if key_path.exists() {
                     serde_json::from_str(&fs::read_to_string(&key_path)?)?
                 } else {
-                    let pk = MalPriv::generate(rand::thread_rng());
+                    let pk = MalPriv::generate(ark_std::rand::rngs::StdRng::from_entropy());
                     fs::write(&key_path, serde_json::to_vec_pretty(&pk)?)?;
                     pk
                 };
