@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use rand::Rng;
+use serde::Serialize;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 mod config;
@@ -124,36 +126,56 @@ async fn main() -> Result<()> {
             // --------- node key (persist) ------------
             let key_path = home_dir.join("node_key.json");
             if !key_path.exists() {
-                #[derive(Serialize)]
-                struct KeyFile {
-                    private_key_hex: String,
-                }
-                let sk = PrivateKey::new_random();
-                let kf = KeyFile {
-                    private_key_hex: hex::encode(sk.to_bytes_be()),
-                };
-                fs::write(&key_path, serde_json::to_vec_pretty(&kf)?)?;
+                use aura_node_lib::malachitebft_test::PrivateKey as MalPriv;
+                let priv_key = MalPriv::generate(&mut rand::thread_rng());
+                fs::write(&key_path, serde_json::to_vec_pretty(&priv_key)?)?;
             }
 
             // --------- genesis ------------------------
             let genesis_path = home_dir.join("genesis.json");
             if !genesis_path.exists() {
-                fs::write(
-                    &genesis_path,
-                    r#"{\n  \"height\": 0,\n  \"time\": \"2025-01-01T00:00:00Z\",\n  \"app_hash\": \"\",\n  \"validator_set\": [],\n  \"consensus_params\": {}\n}\n"#,
-                )?;
+                let genesis_json = r#"{ "validator_set": { "validators": [] } }"#;
+                fs::write(&genesis_path, genesis_json)?;
             }
 
             // --------- malachite config ---------------
             let mal_cfg_path = home_dir.join("malachite.toml");
-            if !mal_cfg_path.exists() {
-                fs::write(
-                    &mal_cfg_path,
-                    format!(
-                        "moniker = \"devnet-node\"\nhome = \"{}\"\ngenesis_file = \"genesis.json\"\npriv_validator_key_file = \"node_key.json\"\nnode_key_file = \"node_key.json\"\n\n[p2p]\nlisten_addr = \"/ip4/0.0.0.0/tcp/26656\"\nexternal_addr = \"\"\nseeds = []\n\n[consensus]\ntimeout_propose_ms   = 3000\ntimeout_prevote_ms   = 1000\ntimeout_precommit_ms = 1000\ntimeout_commit_ms    = 1000\n",
-                        home_dir.display()
-                    ),
-                )?;
+            {
+                let tpl = format!(
+                    r#"moniker = "devnet-node"
+home = "{home}"
+genesis_file = "genesis.json"
+priv_validator_key_file = "node_key.json"
+node_key_file = "node_key.json"
+
+[p2p]
+listen_addr = "/ip4/0.0.0.0/tcp/26656"
+persistent_peers = []
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+
+[consensus]
+timeout_propose   = "3s"
+timeout_prevote   = "1s"
+timeout_precommit = "1s"
+timeout_commit    = "1s"
+timeout_propose_delta = "0s"
+timeout_prevote_delta = "0s"
+timeout_precommit_delta = "0s"
+timeout_rebroadcast = "5s"
+value_payload = "parts-only"
+
+[consensus.p2p]
+listen_addr = "/ip4/0.0.0.0/tcp/26656"
+persistent_peers = []
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+"#,
+                    home = home_dir.display()
+                );
+                fs::write(&mal_cfg_path, tpl)?;
             }
 
             // --------- build temp app config ----------

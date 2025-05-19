@@ -10,6 +10,7 @@ pub use malachitebft_core_consensus;
 pub use malachitebft_core_types;
 pub use malachitebft_engine;
 pub use malachitebft_peer;
+pub use malachitebft_test;
 
 pub mod config; // Make config module public
 pub mod node; // Make node module public to access AuraNode

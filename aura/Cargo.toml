@@ -19,6 +19,7 @@ serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hex = "0.4"
+rand = "0.8"
 
 # Workspace dependencies
 aura-node-lib = { path = "../aura-node-lib" }

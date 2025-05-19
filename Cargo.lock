@@ -543,6 +543,7 @@ dependencies = [
  "clap",
  "config 0.15.11",
  "hex",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "shellexpand",

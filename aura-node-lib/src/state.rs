@@ -87,6 +87,8 @@ impl AuraState {
         node_private_key: Arc<aura_core::PrivateKey>,
     ) -> AuraResult<Self> {
         let db = Database::create(db_path)?;
+        // create tables if they are missing (first run)
+        Self::init_db(&db)?;
         let (current_height, current_app_hash) = Self::load_initial_state(&db)?;
         info!(
             "AuraState initialized. Current height: {}, App hash: {}",
@@ -338,6 +340,17 @@ impl AuraState {
                 .map_err(|e| Error::State(format!("Failed to serialize tx: {}", e)))?;
             tx_table.insert(tx_id_bytes.as_ref(), tx_bytes.as_slice())?;
         }
+        Ok(())
+    }
+
+    /// Ensure metadata and other tables exist so that initial load succeeds on a fresh DB
+    fn init_db(db: &Database) -> AuraResult<()> {
+        let write_txn = db.begin_write()?;
+        // Opening the table creates it if it does not exist
+        write_txn.open_table(METADATA_TABLE)?;
+        write_txn.open_table(BLOCKS_TABLE)?;
+        write_txn.open_table(TRANSACTIONS_TABLE)?;
+        write_txn.commit()?;
         Ok(())
     }
 }
