@@ -47,6 +47,12 @@ enum Commands {
     },
     /// Create and run a self-contained single-node devnet in ./.testnet
     SingleNodeTestnet,
+    /// Create and run a multi-node (local) testnet in ./.testnet-multi
+    MultiNodeTestnet {
+        /// Number of nodes to start (default 4)
+        #[clap(short, long, default_value_t = 4)]
+        nodes: u16,
+    },
 }
 
 #[tokio::main]
@@ -212,6 +218,168 @@ pubsub_max_size = "4MiB"
                 &home_dir,
             )
             .await?;
+        }
+        Commands::MultiNodeTestnet { nodes } => {
+            use aura_core::keys::SeedPhrase;
+            use futures::future::join_all;
+            use std::fs;
+            use std::path::PathBuf;
+
+            let base_home: PathBuf = std::fs::canonicalize(PathBuf::from(".testnet-multi"))
+                .unwrap_or_else(|_| PathBuf::from(".testnet-multi"));
+            fs::create_dir_all(&base_home)?;
+
+            // --------- generate keys and seed phrases ---------
+            use aura_node_lib::malachitebft_test as mal_test;
+            use mal_test::{Genesis as MalGenesis, PrivateKey as MalPriv, Validator, ValidatorSet};
+
+            let mut validators: Vec<(mal_test::PublicKey, PathBuf)> = Vec::new();
+
+            // For each node create directory, key, seed phrase, store priv key
+            for idx in 0..nodes {
+                let node_dir = base_home.join(format!("node{}", idx));
+                fs::create_dir_all(&node_dir)?;
+
+                // seed phrase
+                let seed_path = node_dir.join("seed_phrase.txt");
+                let seed_phrase_str: String = if seed_path.exists() {
+                    fs::read_to_string(&seed_path)?
+                } else {
+                    let sp = SeedPhrase::new_random()?;
+                    let s = sp.as_str();
+                    fs::write(&seed_path, &s)?;
+                    s
+                };
+
+                // private key for malachite / consensus
+                let key_path = node_dir.join("node_key.json");
+                let priv_key: MalPriv = if key_path.exists() {
+                    serde_json::from_str(&fs::read_to_string(&key_path)?)?
+                } else {
+                    let pk = MalPriv::generate(rand::thread_rng());
+                    fs::write(&key_path, serde_json::to_vec_pretty(&pk)?)?;
+                    pk
+                };
+
+                let pub_key = priv_key.public_key();
+                validators.push((pub_key, node_dir));
+            }
+
+            // Build validator set genesis
+            let validator_set = ValidatorSet::new(
+                validators
+                    .iter()
+                    .map(|(pk, _)| Validator::new(*pk, 1))
+                    .collect::<Vec<_>>(),
+            );
+            let genesis = MalGenesis { validator_set };
+            let genesis_json = serde_json::to_string_pretty(&genesis)?;
+
+            // Write genesis.json to each node dir
+            for (_, node_dir) in validators.iter() {
+                fs::write(node_dir.join("genesis.json"), &genesis_json)?;
+            }
+
+            // Build and run each node
+            let mut handles = Vec::new();
+
+            for (idx, (_, node_dir)) in validators.iter().enumerate() {
+                // malachite config
+                let listen_port = 26656 + idx as u16;
+                let rpc_port = 26660 + idx as u16;
+
+                let listen_addr = format!("/ip4/0.0.0.0/tcp/{}", listen_port);
+
+                // peers list (multiaddress with id placeholder). For local network we can omit or include others' listen_addr.
+                let mut persistent = Vec::new();
+                for (p_idx, _) in validators.iter().enumerate() {
+                    if p_idx != idx {
+                        let peer_addr = format!("/ip4/127.0.0.1/tcp/{}", 26656 + p_idx as u16);
+                        persistent.push(peer_addr);
+                    }
+                }
+
+                let mal_cfg_path = node_dir.join("malachite.toml");
+
+                let tpl = format!(
+                    r#"moniker = "node-{idx}"
+home = "{home}"
+genesis_file = "genesis.json"
+priv_validator_key_file = "node_key.json"
+node_key_file = "node_key.json"
+
+[p2p]
+listen_addr = "{listen}"
+persistent_peers = [{peers}]
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+
+[consensus]
+timeout_propose   = "3s"
+timeout_prevote   = "1s"
+timeout_precommit = "1s"
+timeout_commit    = "1s"
+timeout_propose_delta = "0s"
+timeout_prevote_delta = "0s"
+timeout_precommit_delta = "0s"
+timeout_rebroadcast = "5s"
+value_payload = "parts-only"
+
+[consensus.p2p]
+listen_addr = "{listen}"
+persistent_peers = [{peers}]
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+"#,
+                    idx = idx,
+                    home = node_dir.display(),
+                    listen = listen_addr,
+                    peers = persistent
+                        .iter()
+                        .map(|p| format!("\"{}\"", p))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                fs::write(&mal_cfg_path, tpl)?;
+
+                // Build temporary app config
+                let node_conf = config::NodeConfig {
+                    p2p_listen_address: listen_addr.clone(),
+                    rpc_listen_address: format!("127.0.0.1:{}", rpc_port),
+                    bootstrap_peers: persistent.clone(),
+                    genesis_file_path: node_dir.join("genesis.json").to_string_lossy().into(),
+                    node_data_dir: node_dir.to_string_lossy().into(),
+                };
+
+                let seed_phrase_str = fs::read_to_string(node_dir.join("seed_phrase.txt"))?;
+
+                let tmp_cfg = AuraAppConfig {
+                    node: node_conf,
+                    wallet: app_config.wallet.clone(),
+                };
+
+                let cfg_clone = tmp_cfg.clone();
+                let dir_clone = node_dir.clone();
+
+                handles.push(tokio::spawn(async move {
+                    if let Err(e) = node_cmd::handle_node_command(
+                        node_cmd::NodeCommands::Start {
+                            seed_phrase: Some(seed_phrase_str),
+                        },
+                        &cfg_clone,
+                        &dir_clone,
+                    )
+                    .await
+                    {
+                        eprintln!("Node {idx} exited with error: {e}");
+                    }
+                }));
+            }
+
+            // Wait on all nodes indefinitely (or until one exits)
+            let _ = join_all(handles).await;
         }
         Commands::Node(node_commands) => {
             node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?
