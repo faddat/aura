@@ -14,7 +14,7 @@ anyhow = "1.0"
 # The rand/rand_core ecosystem can be complex with version compatibility
 # Use versions known to work with ark 0.5.0 
 rand = "0.8.5"
-rand_core = "0.6.4"
+rand_core = "0.9.3"
 getrandom = "0.3.3"
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] } # Latest stable
 
