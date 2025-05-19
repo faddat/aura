@@ -7,7 +7,6 @@ use eyre::eyre;
 use tokio::task::JoinHandle;
 use tracing::{Instrument, debug, error, info, warn};
 
-use crate::Result as AuraLibResult;
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
 
@@ -24,20 +23,10 @@ use malachitebft_app::{
     },
 };
 
-// --- Malachite Core Types ---
-use malachitebft_core_types::{
-    Context, NilOrVal, Round, Round as MalachiteRound, ValueId,
-    crypto::{Ed25519, NodeKey, PublicKey},
-};
-
-// Also import the validator trait directly from the test crate
-use malachitebft_test::types::core::Validator as MalachiteValidatorTrait;
-
 // --- Malachite Engine ---
-use malachitebft_app_channel::run::start_engine as malachite_start_engine;
+use malachitebft_app_channel::start_engine as malachite_start_engine;
 
 // --- Malachite Config ---
-use malachitebft_config::Config as MalachiteBftConfig;
 use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
@@ -48,9 +37,6 @@ use malachitebft_test::{
     PublicKey as TestPublicKey, Validator as TestValidator, ValidatorSet as TestValidatorSet,
     Value as TestValue, Vote as TestVote, codec::proto::ProtobufCodec,
 };
-
-// App Context trait for msg_type_name
-use malachitebft_app_channel::AppContext;
 
 // --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
