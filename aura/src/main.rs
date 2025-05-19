@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use hex;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 mod config;
