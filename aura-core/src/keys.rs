@@ -3,9 +3,8 @@ use crate::{AURA_ADDR_HRP, AuraAddress, CurveFr, CurveG1};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger as ArkBigInteger, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::{SeedableRng, rngs::StdRng};
+use ark_std::rand::{RngCore, SeedableRng, rngs::StdRng};
 use bip39::{Language, Mnemonic};
-use rand::{Rng, RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
@@ -25,7 +24,8 @@ pub struct SeedPhrase(Mnemonic);
 impl SeedPhrase {
     pub fn new_random() -> Result<Self, CoreError> {
         let mut entropy = [0u8; 16];
-        OsRng.fill_bytes(&mut entropy);
+        let mut rng = StdRng::from_entropy();
+        rng.fill_bytes(&mut entropy);
 
         let mnemonic = Mnemonic::from_entropy(&entropy)
             .map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
@@ -56,7 +56,7 @@ pub struct PrivateKey(pub CurveFr);
 
 impl PrivateKey {
     pub fn new_random() -> Self {
-        let mut rng = OsRng;
+        let mut rng = StdRng::from_entropy();
         PrivateKey(CurveFr::rand(&mut rng))
     }
 

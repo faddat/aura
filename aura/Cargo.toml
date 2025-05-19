@@ -26,6 +26,7 @@ futures = "0.3"
 aura-node-lib = { path = "../aura-node-lib" }
 aura-wallet-lib = { path = "../aura-wallet-lib" } # Keep for future use
 aura-core = { path = "../aura-core" }
+ark-std = "0.5.0"
 
 [dev-dependencies]
 # For integration tests later

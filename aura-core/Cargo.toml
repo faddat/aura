@@ -10,7 +10,7 @@ serde_json = "1.0"
 hex = "0.4"
 thiserror = "2.0.12"                                               # Unified version
 bech32 = "0.11.0"
-anyhow = "1.0"
+anyhow = "1.0.98"
 # The rand/rand_core ecosystem can be complex with version compatibility
 # Use versions known to work with ark 0.5.0 
 rand = "0.9.1"
