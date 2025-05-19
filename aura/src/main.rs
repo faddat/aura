@@ -195,7 +195,7 @@ value_payload = "parts-only"
 [consensus.p2p]
 listen_addr = "/ip4/0.0.0.0/tcp/26656"
 persistent_peers = []
-protocol = {{ type = "" }}
+protocol = {{ type = "broadcast" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 "#,
