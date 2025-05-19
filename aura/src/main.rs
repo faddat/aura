@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use rand::Rng;
 use serde::Serialize;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -104,12 +103,12 @@ async fn main() -> Result<()> {
             println!("Node key written to {}", key_path.display());
         }
         Commands::SingleNodeTestnet => {
-            use aura_core::keys::{PrivateKey, SeedPhrase};
-            use serde::Serialize;
+            use aura_core::keys::SeedPhrase;
             use std::fs;
             use std::path::PathBuf;
 
-            let home_dir = PathBuf::from(".testnet");
+            let home_dir = std::fs::canonicalize(PathBuf::from(".testnet").as_path())
+                .unwrap_or_else(|_| PathBuf::from(".testnet"));
             fs::create_dir_all(&home_dir)?;
 
             // --------- seed phrase (persist) ---------
@@ -125,18 +124,32 @@ async fn main() -> Result<()> {
 
             // --------- node key (persist) ------------
             let key_path = home_dir.join("node_key.json");
-            if !key_path.exists() {
+            {
                 use aura_node_lib::malachitebft_test::PrivateKey as MalPriv;
+                // Always (re)write the key in malachite-compatible JSON format to avoid legacy
+                // hex key formats that this devnet no longer supports.
                 let priv_key = MalPriv::generate(&mut rand::thread_rng());
                 fs::write(&key_path, serde_json::to_vec_pretty(&priv_key)?)?;
             }
 
             // --------- genesis ------------------------
+            use aura_node_lib::malachitebft_test as mal_test;
+            use mal_test::{Genesis as MalGenesis, PrivateKey as MalPriv, Validator, ValidatorSet};
+
             let genesis_path = home_dir.join("genesis.json");
-            if !genesis_path.exists() {
-                let genesis_json = r#"{ "validator_set": { "validators": [] } }"#;
-                fs::write(&genesis_path, genesis_json)?;
-            }
+
+            // Load the node's private key so we can derive its public key & address
+            let priv_key_json = fs::read_to_string(&key_path)?;
+            let priv_key: MalPriv = serde_json::from_str(&priv_key_json)?;
+            let pub_key = priv_key.public_key();
+
+            // Build a single-validator set with voting power 1
+            let validator = Validator::new(pub_key, 1);
+            let validator_set = ValidatorSet::new(vec![validator]);
+
+            let genesis = MalGenesis { validator_set };
+            let genesis_json = serde_json::to_string_pretty(&genesis)?;
+            fs::write(&genesis_path, genesis_json)?;
 
             // --------- malachite config ---------------
             let mal_cfg_path = home_dir.join("malachite.toml");

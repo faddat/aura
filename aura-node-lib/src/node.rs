@@ -16,6 +16,7 @@ use malachitebft_app::node::{
     EngineHandle, Node as MalachiteAppNode, NodeConfig, NodeHandle as MalachiteAppNodeHandle,
 };
 
+use chrono::Utc;
 use malachitebft_engine::util::streaming::StreamContent;
 
 use malachitebft_core_consensus::{LocallyProposedValue, ProposedValue};
@@ -34,8 +35,9 @@ use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
-    Address as TestAddress, Ed25519Provider, Genesis as TestGenesis,
-    Height as TestHeight, PrivateKey as TestPrivateKey, PublicKey as TestPublicKey, TestContext, ValidatorSet as TestValidatorSet, Value as TestValue, codec::proto::ProtobufCodec,
+    Address as TestAddress, Ed25519Provider, Genesis as TestGenesis, Height as TestHeight,
+    PrivateKey as TestPrivateKey, PublicKey as TestPublicKey, TestContext,
+    ValidatorSet as TestValidatorSet, Value as TestValue, codec::proto::ProtobufCodec,
 };
 
 // --- Placeholder for Malachite's Top-Level Config ---
@@ -184,8 +186,7 @@ impl MalachiteAppNode for AuraNode {
         let codec = ProtobufCodec;
 
         let app_state_db_path = self.get_home_dir().join(
-            self
-                .aura_app_config
+            self.aura_app_config
                 .db_path
                 .file_name()
                 .expect("App DB path should have a filename"),
@@ -202,7 +203,7 @@ impl MalachiteAppNode for AuraNode {
             self.clone(),
             malachite_config.clone(),
             None,
-            initial_validator_set,
+            initial_validator_set.clone(),
         )
         .await?;
         info!("Malachite engine started via app-channel.");
@@ -210,10 +211,18 @@ impl MalachiteAppNode for AuraNode {
         let tx_event_channel = channels.events.clone();
         let app_logic_task_span =
             tracing::info_span!("app_message_loop", moniker = %malachite_config.moniker);
+
+        let init_vs_for_loop = initial_validator_set.clone();
+
         let app_logic_handle = tokio::spawn(async move {
-            if let Err(e) = app_message_loop(app_state_arc, aura_malachite_ctx, channels)
-                .instrument(app_logic_task_span)
-                .await
+            if let Err(e) = app_message_loop(
+                app_state_arc,
+                aura_malachite_ctx,
+                channels,
+                init_vs_for_loop,
+            )
+            .instrument(app_logic_task_span)
+            .await
             {
                 error!(?e, "Application message loop exited with error");
             }
@@ -237,6 +246,7 @@ async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
     _ctx: TestContext,
     mut channels: Channels<TestContext>,
+    initial_validator_set: TestValidatorSet,
 ) -> eyre::Result<()> {
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
@@ -251,7 +261,7 @@ async fn app_message_loop(
                         } else {
                             TestHeight::new(state.height_value() + 1)
                         };
-                        let validator_set = TestValidatorSet::new(vec![]);
+                        let validator_set = initial_validator_set.clone();
                         info!(%start_height, "AppLoop: Consensus is ready. Replying with StartHeight.");
                         if reply.send((start_height, validator_set)).is_err() {
                             error!("AppLoop: Failed to send ConsensusReady reply (StartHeight)");
@@ -259,7 +269,13 @@ async fn app_message_loop(
                     }
                     AppMsg::StartedRound { height, round, proposer, reply_value } => {
                         let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for StartedRound: {}", e))?;
-                        state_guard.current_height = height.as_u64();
+                        // Begin a new block for this height so commit will be successful later
+                        let ts = Utc::now().timestamp();
+                        let proposer_bytes = proposer.into_inner().to_vec();
+                        if let Err(e) = state_guard.begin_block(height.as_u64(), proposer_bytes, ts) {
+                            error!("AppLoop: begin_block failed: {:?}", e);
+                        }
+                        // Do NOT bump committed current_height here; we only track the committed height.
                         state_guard.current_round = round;
                         info!(%height, %round, %proposer, "AppLoop: Started round.");
                          if reply_value.send(Vec::new()).is_err() {
@@ -306,7 +322,7 @@ async fn app_message_loop(
                         match state_guard.commit_block() {
                             Ok(_app_hash) => {
                                 let next_height = TestHeight::new(state_guard.height_value() + 1);
-                                let validator_set = TestValidatorSet::new(vec![]);
+                                let validator_set = initial_validator_set.clone();
                                 info!("AppLoop: Commit successful. Replying to start next height: {}", next_height);
                                 if reply.send(ConsensusMsg::StartHeight(next_height, validator_set)).is_err() {
                                     error!("AppLoop: Failed to send Decided reply (StartHeight)");
@@ -315,7 +331,7 @@ async fn app_message_loop(
                             Err(e) => {
                                 error!("AppLoop: Commit failed after Decided: {:?}. Requesting restart for height {}.", e, state_guard.pending_block_height);
                                 let current_pending_height = TestHeight::new(state_guard.pending_block_height);
-                                let validator_set = TestValidatorSet::new(vec![]);
+                                let validator_set = initial_validator_set.clone();
                                 if reply.send(ConsensusMsg::RestartHeight(current_pending_height, validator_set)).is_err() {
                                      error!("AppLoop: Failed to send Decided reply (RestartHeight)");
                                 }
@@ -330,8 +346,7 @@ async fn app_message_loop(
                     }
                     AppMsg::GetValidatorSet { height, reply } => {
                         info!("AppLoop: GetValidatorSet called for height {}", height);
-                        let vs_placeholder = TestValidatorSet::new(vec![]);
-                        if reply.send(Some(vs_placeholder)).is_err() {
+                        if reply.send(Some(initial_validator_set.clone())).is_err() {
                             error!("AppLoop: Failed to send GetValidatorSet reply");
                         }
                     }
