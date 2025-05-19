@@ -170,7 +170,7 @@ node_key_file = "node_key.json"
 [p2p]
 listen_addr = "/ip4/0.0.0.0/tcp/26656"
 persistent_peers = []
-protocol = {{ type = "broadcast" }}
+protocol = {{ type = "gossipsub" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 
@@ -188,7 +188,7 @@ value_payload = "parts-only"
 [consensus.p2p]
 listen_addr = "/ip4/0.0.0.0/tcp/26656"
 persistent_peers = []
-protocol = {{ type = "broadcast" }}
+protocol = {{ type = "" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 "#,
@@ -311,7 +311,7 @@ node_key_file = "node_key.json"
 [p2p]
 listen_addr = "{listen}"
 persistent_peers = [{peers}]
-protocol = {{ type = "broadcast" }}
+protocol = {{ type = "gossipsub" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 
@@ -329,7 +329,7 @@ value_payload = "parts-only"
 [consensus.p2p]
 listen_addr = "{listen}"
 persistent_peers = [{peers}]
-protocol = {{ type = "broadcast" }}
+protocol = {{ type = "gossipsub" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 "#,

@@ -16,11 +16,23 @@ magical, simple private currency in rust
 
 ### set up keys
 
+
+#### Single Node Testnet
+
 ```bash
 cargo run -p aura -- single-node-testnet
 ```
 
+#### Multi-Node Testnet
+
+```bash
+cargo run --bin aura -- multi-node-testnet --nodes 100
+```
+
+
+
 ### config file
+
 ```
 moniker = "solo-validator"
 home    = "."

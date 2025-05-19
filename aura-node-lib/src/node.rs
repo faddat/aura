@@ -42,7 +42,8 @@ use malachitebft_test::{
     PrivateKey as TestPrivateKey, PublicKey as TestPublicKey, TestContext,
     ValidatorSet as TestValidatorSet, Value as TestValue, codec::proto::ProtobufCodec,
 };
-use malachitebft_test::{ProposalData, ProposalInit, ProposalPart};
+use malachitebft_test::{ProposalData, ProposalFin, ProposalInit, ProposalPart};
+use sha3::{Digest, Keccak256};
 
 // --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -218,12 +219,21 @@ impl MalachiteAppNode for AuraNode {
 
         let init_vs_for_loop = initial_validator_set.clone();
 
+        // Prepare signing provider and address for proposal parts
+        let validator_priv_key = self
+            .load_private_key_file()
+            .map_err(|e| eyre!("Failed to load validator private key: {e}"))?;
+        let signing_provider = Ed25519Provider::new(validator_priv_key.clone());
+        let node_address = self.get_address(&validator_priv_key.public_key());
+
         let app_logic_handle = tokio::spawn(async move {
             if let Err(e) = app_message_loop(
                 app_state_arc,
                 aura_malachite_ctx,
                 channels,
                 init_vs_for_loop,
+                signing_provider,
+                node_address,
             )
             .instrument(app_logic_task_span)
             .await
@@ -251,6 +261,8 @@ async fn app_message_loop(
     _ctx: TestContext,
     mut channels: Channels<TestContext>,
     initial_validator_set: TestValidatorSet,
+    signing_provider: Ed25519Provider,
+    node_address: TestAddress,
 ) -> eyre::Result<()> {
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
@@ -306,7 +318,7 @@ async fn app_message_loop(
                         // small placeholder implementation that should be
                         // replaced with proper block streaming logic once the
                         // Aura block structure is finalised.
-                        if let Err(e) = stream_dummy_proposal_parts(&mut channels, height, round).await {
+                        if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
                             error!(?e, "AppLoop: Failed to stream proposal parts");
                         }
                     }
@@ -439,14 +451,16 @@ impl AuraNode {
 /// Stream a very small, dummy proposal consisting of Init, one Data, and Fin parts.
 /// This is a placeholder implementation that satisfies the consensus engine's
 /// expectation of receiving proposal parts for the value produced in `GetValue`.
-async fn stream_dummy_proposal_parts(
+async fn stream_proposal_parts(
     channels: &mut Channels<TestContext>,
     height: TestHeight,
     round: Round,
+    signing_provider: &Ed25519Provider,
+    proposer: TestAddress,
 ) -> eyre::Result<()> {
     use malachitebft_engine::util::streaming::{Sequence, StreamContent};
 
-    // Build a deterministic stream id based on (height, round)
+    // Build deterministic stream id
     let mut id_bytes = Vec::with_capacity(16);
     id_bytes.extend_from_slice(&height.as_u64().to_be_bytes());
     id_bytes.extend_from_slice(&(round.as_i64() as u64).to_be_bytes());
@@ -455,33 +469,51 @@ async fn stream_dummy_proposal_parts(
     let mut sequence: Sequence = 0;
 
     // --- Init part ---
-    let init_part = ProposalPart::Init(ProposalInit::new(
-        height,
-        round,
-        Round::Nil,
-        TestAddress::new([0u8; 20]), // Placeholder proposer address
-    ));
-    let init_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(init_part));
+    let init_part = ProposalPart::Init(ProposalInit::new(height, round, Round::Nil, proposer));
+    let init_msg = StreamMessage::new(
+        stream_id.clone(),
+        sequence,
+        StreamContent::Data(init_part.clone()),
+    );
     channels
         .network
         .send(NetworkMsg::PublishProposalPart(init_msg))
         .await?;
     sequence += 1;
 
-    // --- Data part (dummy factor) ---
+    // --- Data part(s) --- (single dummy factor 1)
     let data_part = ProposalPart::Data(ProposalData::new(1));
-    let data_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(data_part));
+    let data_msg = StreamMessage::new(
+        stream_id.clone(),
+        sequence,
+        StreamContent::Data(data_part.clone()),
+    );
     channels
         .network
         .send(NetworkMsg::PublishProposalPart(data_msg))
         .await?;
     sequence += 1;
 
-    // --- Fin part ---
-    let fin_msg = StreamMessage::new(stream_id, sequence, StreamContent::Fin);
+    // Compute hash for Fin signature following same scheme as verification
+    let mut hasher = Keccak256::new();
+    hasher.update(height.as_u64().to_be_bytes());
+    hasher.update(round.as_i64().to_be_bytes());
+    hasher.update(1u64.to_be_bytes());
+    let hash = hasher.finalize();
+
+    let signature = signing_provider.sign(&hash);
+    let fin_part = ProposalPart::Fin(ProposalFin::new(signature));
+    let fin_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(fin_part));
     channels
         .network
         .send(NetworkMsg::PublishProposalPart(fin_msg))
+        .await?;
+
+    // Finally send explicit FIN marker
+    let fin_marker = StreamMessage::new(stream_id, sequence + 1, StreamContent::Fin);
+    channels
+        .network
+        .send(NetworkMsg::PublishProposalPart(fin_marker))
         .await?;
 
     Ok(())
