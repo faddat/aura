@@ -249,7 +249,7 @@ pubsub_max_size = "4MiB"
 
                 // seed phrase
                 let seed_path = node_dir.join("seed_phrase.txt");
-                let seed_phrase_str: String = if seed_path.exists() {
+                let _seed_phrase_str: String = if seed_path.exists() {
                     fs::read_to_string(&seed_path)?
                 } else {
                     let sp = SeedPhrase::new_random()?;
