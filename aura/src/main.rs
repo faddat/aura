@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use serde::Serialize;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 mod config;
@@ -38,6 +39,14 @@ enum Commands {
     Utils(utils_cmd::UtilsCommands),
     /// Initialize Aura configuration
     InitConfig,
+    /// Generate a new node private key and save it under <home>/node_key.json
+    Keygen {
+        /// Home directory where the key file will be written
+        #[clap(long)]
+        home: std::path::PathBuf,
+    },
+    /// Create and run a self-contained single-node devnet in ./.testnet
+    SingleNodeTestnet,
 }
 
 #[tokio::main]
@@ -71,11 +80,148 @@ async fn main() -> Result<()> {
     let app_config = AuraAppConfig::load_or_init(&config_path)?;
     tracing::debug!("Loaded application config: {:?}", app_config);
 
-
     match cli.command {
-        Commands::Node(node_commands) => node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?,
-        Commands::Wallet(wallet_commands) => wallet_cmd::handle_wallet_command(wallet_commands, &app_config, &config_path).await?,
-        Commands::Utils(utils_commands) => utils_cmd::handle_utils_command(utils_commands, &app_config, &config_path).await?,
+        Commands::Keygen { home } => {
+            use aura_core::keys::PrivateKey;
+            use serde::Serialize;
+
+            #[derive(Serialize)]
+            struct KeyFile {
+                private_key_hex: String,
+            }
+
+            std::fs::create_dir_all(&home)?;
+            let sk = PrivateKey::new_random();
+            let key_hex = hex::encode(sk.to_bytes_be());
+            let key_path = home.join("node_key.json");
+            std::fs::write(
+                &key_path,
+                serde_json::to_vec_pretty(&KeyFile {
+                    private_key_hex: key_hex,
+                })?,
+            )?;
+            println!("Node key written to {}", key_path.display());
+        }
+        Commands::SingleNodeTestnet => {
+            use aura_core::keys::SeedPhrase;
+            use std::fs;
+            use std::path::PathBuf;
+
+            let home_dir = std::fs::canonicalize(PathBuf::from(".testnet").as_path())
+                .unwrap_or_else(|_| PathBuf::from(".testnet"));
+            fs::create_dir_all(&home_dir)?;
+
+            // --------- seed phrase (persist) ---------
+            let seed_path = home_dir.join("seed_phrase.txt");
+            let seed_phrase_str: String = if seed_path.exists() {
+                fs::read_to_string(&seed_path)?
+            } else {
+                let sp = SeedPhrase::new_random()?;
+                let s = sp.as_str();
+                fs::write(&seed_path, &s)?;
+                s
+            };
+
+            // --------- node key (persist) ------------
+            let key_path = home_dir.join("node_key.json");
+            {
+                use aura_node_lib::malachitebft_test::PrivateKey as MalPriv;
+                // Always (re)write the key in malachite-compatible JSON format to avoid legacy
+                // hex key formats that this devnet no longer supports.
+                let priv_key = MalPriv::generate(rand::thread_rng());
+                fs::write(&key_path, serde_json::to_vec_pretty(&priv_key)?)?;
+            }
+
+            // --------- genesis ------------------------
+            use aura_node_lib::malachitebft_test as mal_test;
+            use mal_test::{Genesis as MalGenesis, PrivateKey as MalPriv, Validator, ValidatorSet};
+
+            let genesis_path = home_dir.join("genesis.json");
+
+            // Load the node's private key so we can derive its public key & address
+            let priv_key_json = fs::read_to_string(&key_path)?;
+            let priv_key: MalPriv = serde_json::from_str(&priv_key_json)?;
+            let pub_key = priv_key.public_key();
+
+            // Build a single-validator set with voting power 1
+            let validator = Validator::new(pub_key, 1);
+            let validator_set = ValidatorSet::new(vec![validator]);
+
+            let genesis = MalGenesis { validator_set };
+            let genesis_json = serde_json::to_string_pretty(&genesis)?;
+            fs::write(&genesis_path, genesis_json)?;
+
+            // --------- malachite config ---------------
+            let mal_cfg_path = home_dir.join("malachite.toml");
+            {
+                let tpl = format!(
+                    r#"moniker = "devnet-node"
+home = "{home}"
+genesis_file = "genesis.json"
+priv_validator_key_file = "node_key.json"
+node_key_file = "node_key.json"
+
+[p2p]
+listen_addr = "/ip4/0.0.0.0/tcp/26656"
+persistent_peers = []
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+
+[consensus]
+timeout_propose   = "3s"
+timeout_prevote   = "1s"
+timeout_precommit = "1s"
+timeout_commit    = "1s"
+timeout_propose_delta = "0s"
+timeout_prevote_delta = "0s"
+timeout_precommit_delta = "0s"
+timeout_rebroadcast = "5s"
+value_payload = "parts-only"
+
+[consensus.p2p]
+listen_addr = "/ip4/0.0.0.0/tcp/26656"
+persistent_peers = []
+protocol = {{ type = "broadcast" }}
+rpc_max_size = "10MiB"
+pubsub_max_size = "4MiB"
+"#,
+                    home = home_dir.display()
+                );
+                fs::write(&mal_cfg_path, tpl)?;
+            }
+
+            // --------- build temp app config ----------
+            let node_conf = config::NodeConfig {
+                p2p_listen_address: "/ip4/0.0.0.0/tcp/26656".to_string(),
+                rpc_listen_address: "127.0.0.1:26657".to_string(),
+                bootstrap_peers: vec![],
+                genesis_file_path: genesis_path.to_string_lossy().into(),
+                node_data_dir: home_dir.to_string_lossy().into(),
+            };
+            let tmp_cfg = AuraAppConfig {
+                node: node_conf,
+                wallet: app_config.wallet.clone(),
+            };
+
+            node_cmd::handle_node_command(
+                node_cmd::NodeCommands::Start {
+                    seed_phrase: Some(seed_phrase_str),
+                },
+                &tmp_cfg,
+                &home_dir,
+            )
+            .await?;
+        }
+        Commands::Node(node_commands) => {
+            node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?
+        }
+        Commands::Wallet(wallet_commands) => {
+            wallet_cmd::handle_wallet_command(wallet_commands, &app_config, &config_path).await?
+        }
+        Commands::Utils(utils_commands) => {
+            utils_cmd::handle_utils_command(utils_commands, &app_config, &config_path).await?
+        }
         Commands::InitConfig => unreachable!(), // Handled above
     }
 

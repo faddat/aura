@@ -12,6 +12,36 @@ magical, simple private currency in rust
 * Code AND supply need to be auditable
 * Penumbra is a DEX, and stores some things in the clear.  Aura is a currency, and stores nothing in the clear.
 
+## Local single node devnet
+
+### set up keys
+
+```bash
+cargo run -p aura -- keygen --home ./devnet
+```
+
+### config file
+```
+moniker = "solo-validator"
+home    = "."
+genesis_file            = "genesis.json"          # see next step
+priv_validator_key_file = "node_key.json"         # we just created it
+node_key_file           = "node_key.json"         # same file is fine
+
+[p2p]
+listen_addr   = "/ip4/0.0.0.0/tcp/26656"
+external_addr = ""
+seeds         = []
+
+[consensus]
+# → all values are the defaults Malachite expects
+timeout_propose_ms   = 3000
+timeout_prevote_ms   = 1000
+timeout_precommit_ms = 1000
+timeout_commit_ms    = 1000
+```
+
+
 ## Status
 
 For the love of god don't use this right now.  It is:

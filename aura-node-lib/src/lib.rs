@@ -10,16 +10,19 @@ pub use malachitebft_core_consensus;
 pub use malachitebft_core_types;
 pub use malachitebft_engine;
 pub use malachitebft_peer;
+pub use malachitebft_test;
 
-mod application;
 pub mod config; // Make config module public
 pub mod node; // Make node module public to access AuraNode
 mod state;
 
-pub use application::AuraApplication;
+// application module temporarily disabled until ABCI shim updated
+// mod application;
+// pub use application::AuraApplication;
+
 pub use config::AuraNodeConfig;
 pub use node::AuraNode; // Export AuraNode
-pub use state::{AuraState, Block}; // Export AuraState and Block from state module
+pub use state::{AuraState, Block, ValidatorUpdate}; // Export ValidatorUpdate as well
 
 /// Represents the state of the Aura node (potentially for higher-level management, currently unused)
 #[derive(Debug)]

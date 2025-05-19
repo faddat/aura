@@ -1,5 +1,6 @@
 use crate::config::AuraAppConfig;
 use anyhow::{Context, Result};
+use aura_node_lib::malachitebft_app::node::Node as MalachiteAppNodeTrait;
 use clap::Subcommand;
 use std::path::Path;
 use std::sync::Arc; // Required for Arc::new
@@ -33,15 +34,14 @@ pub async fn handle_node_command(
             let node_lib_config = aura_node_lib::AuraNodeConfig {
                 node_id: "simulation-node-0".to_string(), // Example node ID for simulation
                 db_path: {
-                    let expanded_node_data_dir =
-                        shellexpand::tilde(&app_config.node.node_data_dir).into_owned();
-                    let data_dir_path = std::path::PathBuf::from(expanded_node_data_dir);
-                    if !data_dir_path.exists() {
-                        std::fs::create_dir_all(&data_dir_path).with_context(|| {
-                            format!("Failed to create node data directory: {:?}", data_dir_path)
+                    let data_dir = shellexpand::tilde(&app_config.node.node_data_dir).into_owned();
+                    let dir_path = std::path::PathBuf::from(data_dir);
+                    if !dir_path.exists() {
+                        std::fs::create_dir_all(&dir_path).with_context(|| {
+                            format!("Failed to create node data directory: {:?}", dir_path)
                         })?;
                     }
-                    data_dir_path.join("aura_node_sim.db") // Specific DB name for simulation
+                    dir_path.join("aura_node_sim.db")
                 },
                 p2p: aura_node_lib::config::P2PConfig {
                     listen_addr: app_config.node.p2p_listen_address.clone(),
@@ -85,14 +85,22 @@ pub async fn handle_node_command(
                 }
             };
 
-            let node = aura_node_lib::node::AuraNode::new(node_lib_config, node_sk)
-                .map_err(|e| anyhow::anyhow!("Failed to initialize AuraNode: {}", e))?;
+            // Build the AuraNode struct directly (new() was removed)
+            let home_dir = shellexpand::tilde(&app_config.node.node_data_dir).into_owned();
+            let home_dir = std::path::PathBuf::from(home_dir);
 
-            // start_simulation_loop runs indefinitely or until an unrecoverable error.
-            Arc::new(node)
-                .start_simulation_loop()
+            let malachite_cfg_path = home_dir.join("malachite.toml");
+
+            let aura_node = aura_node_lib::node::AuraNode::new(
+                home_dir.clone(),
+                node_lib_config,
+                malachite_cfg_path,
+                Arc::new(node_sk),
+            );
+
+            MalachiteAppNodeTrait::run(aura_node)
                 .await
-                .map_err(|e| anyhow::anyhow!("Simulation loop exited: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("AuraNode run exited: {}", e))?;
 
             tracing::info!("Aura node simulation loop finished.");
             Ok(())
