@@ -309,13 +309,9 @@ pubsub_max_size = "4MiB"
                 let mal_cfg_path = node_dir.join("malachite.toml");
 
                 #[derive(Serialize)]
-                struct MalachiteConfig {
-                    moniker: String,
-                    home: String,
-                    genesis_file: String,
-                    priv_validator_key_file: String,
-                    node_key_file: String,
-                    p2p: P2PConfig,
+                struct ProtocolConfig {
+                    #[serde(rename = "type")]
+                    protocol_type: String,
                 }
 
                 #[derive(Serialize)]
@@ -324,12 +320,42 @@ pubsub_max_size = "4MiB"
                     persistent_peers: Vec<String>,
                     protocol: ProtocolConfig,
                     rpc_max_size: String,
+                    pubsub_max_size: String,
                 }
 
                 #[derive(Serialize)]
-                struct ProtocolConfig {
-                    #[serde(rename = "type")]
-                    protocol_type: String,
+                struct ConsensusP2PConfig {
+                    listen_addr: String,
+                    persistent_peers: Vec<String>,
+                    protocol: ProtocolConfig,
+                    rpc_max_size: String,
+                    pubsub_max_size: String,
+                }
+
+                #[derive(Serialize)]
+                struct ConsensusConfigSection {
+                    timeout_propose: String,
+                    timeout_prevote: String,
+                    timeout_precommit: String,
+                    timeout_commit: String,
+                    timeout_propose_delta: String,
+                    timeout_prevote_delta: String,
+                    timeout_precommit_delta: String,
+                    timeout_rebroadcast: String,
+                    value_payload: String,
+                    #[serde(rename = "p2p")]
+                    p2p: ConsensusP2PConfig,
+                }
+
+                #[derive(Serialize)]
+                struct MalachiteConfig {
+                    moniker: String,
+                    home: String,
+                    genesis_file: String,
+                    priv_validator_key_file: String,
+                    node_key_file: String,
+                    p2p: P2PConfig,
+                    consensus: ConsensusConfigSection,
                 }
 
                 let config = MalachiteConfig {
@@ -345,40 +371,32 @@ pubsub_max_size = "4MiB"
                             protocol_type: "broadcast".to_string(),
                         },
                         rpc_max_size: "10MiB".to_string(),
+                        pubsub_max_size: "4MiB".to_string(),
+                    },
+                    consensus: ConsensusConfigSection {
+                        timeout_propose: "3s".to_string(),
+                        timeout_prevote: "1s".to_string(),
+                        timeout_precommit: "1s".to_string(),
+                        timeout_commit: "1s".to_string(),
+                        timeout_propose_delta: "0s".to_string(),
+                        timeout_prevote_delta: "0s".to_string(),
+                        timeout_precommit_delta: "0s".to_string(),
+                        timeout_rebroadcast: "5s".to_string(),
+                        value_payload: "parts-only".to_string(),
+                        p2p: ConsensusP2PConfig {
+                            listen_addr: listen_addr.clone(),
+                            persistent_peers: persistent.clone(),
+                            protocol: ProtocolConfig {
+                                protocol_type: "broadcast".to_string(),
+                            },
+                            rpc_max_size: "10MiB".to_string(),
+                            pubsub_max_size: "4MiB".to_string(),
+                        },
                     },
                 };
 
-                let tpl = toml::to_string(&config)?;
-pubsub_max_size = "4MiB"
-
-[consensus]
-timeout_propose   = "3s"
-timeout_prevote   = "1s"
-timeout_precommit = "1s"
-timeout_commit    = "1s"
-timeout_propose_delta = "0s"
-timeout_prevote_delta = "0s"
-timeout_precommit_delta = "0s"
-timeout_rebroadcast = "5s"
-value_payload = "parts-only"
-
-[consensus.p2p]
-listen_addr = "{listen}"
-persistent_peers = [{peers}]
-protocol = {{ type = "broadcast" }}
-rpc_max_size = "10MiB"
-pubsub_max_size = "4MiB"
-"#,
-                    idx = idx,
-                    home = node_dir.display(),
-                    listen = listen_addr,
-                    peers = persistent
-                        .iter()
-                        .map(|p| format!("\"{}\"", p))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                fs::write(&mal_cfg_path, tpl)?;
+                let toml_cfg = toml::to_string(&config)?;
+                fs::write(&mal_cfg_path, toml_cfg)?;
 
                 // Build temporary app config
                 let node_conf = config::NodeConfig {
