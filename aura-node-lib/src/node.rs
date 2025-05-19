@@ -18,7 +18,6 @@ use malachitebft_app::node::{
 };
 
 use chrono::Utc;
-use malachitebft_engine::util::streaming::StreamContent;
 
 use malachitebft_core_consensus::{LocallyProposedValue, ProposedValue};
 use malachitebft_core_types::{Round, Validity};
