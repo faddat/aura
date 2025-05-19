@@ -1,8 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-// Use the aliased package names as in Cargo.toml
-use crate::malachitebft_core_types::{
+use malachitebft_app_channel::app::{
+    AppService as MalachiteAppService,
+    types::sync::{Request, Response},
+};
+use malachitebft_core_types::{
     BlockBeginRequest, BlockBeginResponse, BlockEndRequest, BlockEndResponse, CheckTxRequest,
     CheckTxResponse, CommitRequest, CommitResponse, CommitResponseData, DeliverTxRequest,
     DeliverTxResponse, InfoRequest, InfoResponse, InfoResponseData, InitChainRequest,
@@ -11,10 +14,6 @@ use crate::malachitebft_core_types::{
     crypto::PublicKey as MalachitePublicKey,
     time::Timestamp,
     validator::ValidatorUpdate as MalachiteValidatorUpdate,
-};
-use malachitebft_app_channel::app::{
-    AppService as MalachiteAppService,
-    types::sync::{Request, Response},
 };
 
 use tracing::{debug, error, info, warn};
