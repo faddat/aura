@@ -34,11 +34,15 @@ use malachitebft_app_channel::app::types::Keypair as TestKeypair;
 use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
+use bytes::Bytes;
+use malachitebft_app_channel::NetworkMsg;
+use malachitebft_engine::util::streaming::{StreamId, StreamMessage};
 use malachitebft_test::{
     Address as TestAddress, Ed25519Provider, Genesis as TestGenesis, Height as TestHeight,
     PrivateKey as TestPrivateKey, PublicKey as TestPublicKey, TestContext,
     ValidatorSet as TestValidatorSet, Value as TestValue, codec::proto::ProtobufCodec,
 };
+use malachitebft_test::{ProposalData, ProposalInit, ProposalPart};
 
 // --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -297,8 +301,14 @@ async fn app_message_loop(
                             error!("AppLoop: Failed to send GetValue reply (LocallyProposedValue)");
                         }
 
-                        warn!("AppLoop: TODO: Implement streaming of AuraInternalBlock as TestProposalParts for GetValue");
-
+                        // Stream a minimal set of proposal parts so that peers
+                        // can assemble the value if needed. This is a very
+                        // small placeholder implementation that should be
+                        // replaced with proper block streaming logic once the
+                        // Aura block structure is finalised.
+                        if let Err(e) = stream_dummy_proposal_parts(&mut channels, height, round).await {
+                            error!(?e, "AppLoop: Failed to stream proposal parts");
+                        }
                     }
                     AppMsg::ReceivedProposalPart { from, part, reply } => {
                         let part_type_str = match &part.content {
@@ -424,4 +434,55 @@ impl AuraNode {
             _app_level_private_key: private_key,
         }
     }
+}
+
+/// Stream a very small, dummy proposal consisting of Init, one Data, and Fin parts.
+/// This is a placeholder implementation that satisfies the consensus engine's
+/// expectation of receiving proposal parts for the value produced in `GetValue`.
+async fn stream_dummy_proposal_parts(
+    channels: &mut Channels<TestContext>,
+    height: TestHeight,
+    round: Round,
+) -> eyre::Result<()> {
+    use malachitebft_engine::util::streaming::{Sequence, StreamContent};
+
+    // Build a deterministic stream id based on (height, round)
+    let mut id_bytes = Vec::with_capacity(16);
+    id_bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+    id_bytes.extend_from_slice(&(round.as_i64() as u64).to_be_bytes());
+    let stream_id = StreamId::new(Bytes::from(id_bytes));
+
+    let mut sequence: Sequence = 0;
+
+    // --- Init part ---
+    let init_part = ProposalPart::Init(ProposalInit::new(
+        height,
+        round,
+        Round::Nil,
+        TestAddress::new([0u8; 20]), // Placeholder proposer address
+    ));
+    let init_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(init_part));
+    channels
+        .network
+        .send(NetworkMsg::PublishProposalPart(init_msg))
+        .await?;
+    sequence += 1;
+
+    // --- Data part (dummy factor) ---
+    let data_part = ProposalPart::Data(ProposalData::new(1));
+    let data_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(data_part));
+    channels
+        .network
+        .send(NetworkMsg::PublishProposalPart(data_msg))
+        .await?;
+    sequence += 1;
+
+    // --- Fin part ---
+    let fin_msg = StreamMessage::new(stream_id, sequence, StreamContent::Fin);
+    channels
+        .network
+        .send(NetworkMsg::PublishProposalPart(fin_msg))
+        .await?;
+
+    Ok(())
 }

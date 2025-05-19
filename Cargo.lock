@@ -591,6 +591,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aura-core",
+ "bytes",
  "chrono",
  "eyre",
  "hex",
