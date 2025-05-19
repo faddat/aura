@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
                 use aura_node_lib::malachitebft_test::PrivateKey as MalPriv;
                 // Always (re)write the key in malachite-compatible JSON format to avoid legacy
                 // hex key formats that this devnet no longer supports.
-                let priv_key = MalPriv::generate(&mut rand::thread_rng());
+                let priv_key = MalPriv::generate(rand::thread_rng());
                 fs::write(&key_path, serde_json::to_vec_pretty(&priv_key)?)?;
             }
 
