@@ -60,14 +60,21 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logging
-    let log_level = match cli.verbose {
-        0 => "aura=info", // Default
+    let base_filter = match cli.verbose {
+        0 => "aura=info",
         1 => "aura=debug",
         _ => "aura=trace",
     };
+
+    // Reduce log noise for multi-node testnet unless user explicitly increased verbosity.
+    let (filter_str, max_level) = match (&cli.command, cli.verbose) {
+        (Commands::MultiNodeTestnet { .. }, 0) => (base_filter, tracing::Level::INFO),
+        _ => (base_filter, tracing::Level::TRACE),
+    };
+
     let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::new(log_level))
-        .with_max_level(tracing::Level::TRACE) // Ensure all levels can be captured
+        .with_env_filter(EnvFilter::new(filter_str))
+        .with_max_level(max_level)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Setting default tracing subscriber failed");
@@ -170,7 +177,7 @@ node_key_file = "node_key.json"
 [p2p]
 listen_addr = "/ip4/0.0.0.0/tcp/26656"
 persistent_peers = []
-protocol = {{ type = "gossipsub" }}
+protocol = {{ type = "broadcast" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 
@@ -311,7 +318,7 @@ node_key_file = "node_key.json"
 [p2p]
 listen_addr = "{listen}"
 persistent_peers = [{peers}]
-protocol = {{ type = "gossipsub" }}
+protocol = {{ type = "broadcast" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 
@@ -329,7 +336,7 @@ value_payload = "parts-only"
 [consensus.p2p]
 listen_addr = "{listen}"
 persistent_peers = [{peers}]
-protocol = {{ type = "gossipsub" }}
+protocol = {{ type = "broadcast" }}
 rpc_max_size = "10MiB"
 pubsub_max_size = "4MiB"
 "#,
