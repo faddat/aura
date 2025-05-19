@@ -44,6 +44,8 @@ enum Commands {
         #[clap(long)]
         home: std::path::PathBuf,
     },
+    /// Create and run a self-contained single-node devnet in ./.testnet
+    SingleNodeTestnet,
 }
 
 #[tokio::main]
@@ -98,6 +100,90 @@ async fn main() -> Result<()> {
                 })?,
             )?;
             println!("Node key written to {}", key_path.display());
+        }
+        Commands::SingleNodeTestnet => {
+            use aura_core::keys::{PrivateKey, SeedPhrase};
+            use serde::Serialize;
+            use std::fs;
+            use std::path::PathBuf;
+
+            let home_dir = PathBuf::from(".testnet");
+            fs::create_dir_all(&home_dir)?;
+
+            // --------- seed phrase (persist) ---------
+            let seed_path = home_dir.join("seed_phrase.txt");
+            let seed_phrase_str: String = if seed_path.exists() {
+                fs::read_to_string(&seed_path)?
+            } else {
+                let sp = SeedPhrase::new_random()?;
+                let s = sp.as_str();
+                fs::write(&seed_path, &s)?;
+                s
+            };
+
+            // --------- node key (persist) ------------
+            let key_path = home_dir.join("node_key.json");
+            if !key_path.exists() {
+                #[derive(Serialize)]
+                struct KeyFile {
+                    private_key_hex: String,
+                }
+                let sk = PrivateKey::new_random();
+                let kf = KeyFile {
+                    private_key_hex: hex::encode(sk.to_bytes_be()),
+                };
+                fs::write(&key_path, serde_json::to_vec_pretty(&kf)?)?;
+            }
+
+            // --------- genesis ------------------------
+            let genesis_path = home_dir.join("genesis.json");
+            if !genesis_path.exists() {
+                fs::write(
+                    &genesis_path,
+                    r#"{
+  "height": 0,
+  "time": "2025-01-01T00:00:00Z",
+  "app_hash": "",
+  "validator_set": [],
+  "consensus_params": {}
+}
++"#,
+                )?;
+            }
+
+            // --------- malachite config ---------------
+            let mal_cfg_path = home_dir.join("malachite.toml");
+            if !mal_cfg_path.exists() {
+                fs::write(
+                    &mal_cfg_path,
+                    format!(
+                        "moniker = \"devnet-node\"\nhome = \"{}\"\ngenesis_file = \"genesis.json\"\npriv_validator_key_file = \"node_key.json\"\nnode_key_file = \"node_key.json\"\n\n[p2p]\nlisten_addr = \"/ip4/0.0.0.0/tcp/26656\"\nexternal_addr = \"\"\nseeds = []\n\n[consensus]\ntimeout_propose_ms   = 3000\ntimeout_prevote_ms   = 1000\ntimeout_precommit_ms = 1000\ntimeout_commit_ms    = 1000\n",
+                        home_dir.display()
+                    ),
+                )?;
+            }
+
+            // --------- build temp app config ----------
+            let node_conf = config::NodeConfig {
+                p2p_listen_address: "/ip4/0.0.0.0/tcp/26656".to_string(),
+                rpc_listen_address: "127.0.0.1:26657".to_string(),
+                bootstrap_peers: vec![],
+                genesis_file_path: genesis_path.to_string_lossy().into(),
+                node_data_dir: home_dir.to_string_lossy().into(),
+            };
+            let tmp_cfg = AuraAppConfig {
+                node: node_conf,
+                wallet: app_config.wallet.clone(),
+            };
+
+            node_cmd::handle_node_command(
+                node_cmd::NodeCommands::Start {
+                    seed_phrase: Some(seed_phrase_str),
+                },
+                &tmp_cfg,
+                &home_dir,
+            )
+            .await?;
         }
         Commands::Node(node_commands) => {
             node_cmd::handle_node_command(node_commands, &app_config, &config_path).await?
