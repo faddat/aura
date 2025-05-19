@@ -11,31 +11,34 @@ use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::{AuraState, ValidatorUpdate as AuraValidatorUpdate};
 
 // --- Malachite App Imports ---
-use malachitebft_app::{
-    AppService,
-    events::{RxEvent, TxEvent},
-    node::NodeConfig,
-    node::{EngineHandle, Node as MalachiteAppNode, NodeHandle as MalachiteAppNodeHandle},
-    streaming::StreamContent,
-    types::{
-        LocallyProposedValue,
-        sync::{AppMsg, Channels, ConsensusMsg},
-    },
+use malachitebft_app::events::{RxEvent, TxEvent};
+use malachitebft_app::node::{
+    EngineHandle, Node as MalachiteAppNode, NodeConfig, NodeHandle as MalachiteAppNodeHandle,
 };
 
+use malachitebft_engine::util::streaming::StreamContent;
+
+use malachitebft_core_consensus::{LocallyProposedValue, ProposedValue};
+use malachitebft_core_types::{Round, Validity};
+
+use malachitebft_app_channel::{
+    AppMsg, Channels, ConsensusMsg, start_engine as malachite_start_engine,
+};
+
+use malachitebft_app_channel::app::types::Keypair as TestKeypair;
+
 // --- Malachite Engine ---
-use malachitebft_app_channel::start_engine as malachite_start_engine;
 
 // --- Malachite Config ---
 use malachitebft_config::{ConsensusConfig, ValueSyncConfig};
 
 // --- Malachite Test Types (for concrete implementations of traits) ---
 use malachitebft_test::{
-    Address as TestAddress, Context as TestContext, Ed25519Provider, Extension as TestExtension,
-    Genesis as TestGenesis, Height as TestHeight, Keypair as TestKeypair,
-    PrivateKey as TestPrivateKey, Proposal as TestProposal, ProposalPart as TestProposalPart,
-    PublicKey as TestPublicKey, Validator as TestValidator, ValidatorSet as TestValidatorSet,
-    Value as TestValue, Vote as TestVote, codec::proto::ProtobufCodec,
+    Address as TestAddress, Ed25519Provider, Extension as TestExtension, Genesis as TestGenesis,
+    Height as TestHeight, PrivateKey as TestPrivateKey, Proposal as TestProposal,
+    ProposalPart as TestProposalPart, PublicKey as TestPublicKey, TestContext,
+    Validator as TestValidator, ValidatorSet as TestValidatorSet, Value as TestValue,
+    Vote as TestVote, codec::proto::ProtobufCodec,
 };
 
 // --- Placeholder for Malachite's Top-Level Config ---
@@ -173,9 +176,6 @@ impl MalachiteAppNode for AuraNode {
         let span = tracing::info_span!("aura_node_malachite_instance", moniker = %malachite_config.moniker);
         let _enter = span.enter();
 
-        let priv_validator_key_file_content = self.load_private_key_file()?;
-        let priv_validator_key = self.load_private_key(priv_validator_key_file_content);
-
         let aura_malachite_ctx = TestContext::default();
         let malachite_genesis = self.load_genesis()?;
         let initial_validator_set = malachite_genesis.validator_set.clone();
@@ -198,34 +198,13 @@ impl MalachiteAppNode for AuraNode {
             .map_err(|e| eyre!("Failed to create AuraState: {}", e))?;
         let app_state_arc = Arc::new(Mutex::new(app_state));
 
-        let node_key_path = if malachite_config.node_key_file.is_absolute() {
-            malachite_config.node_key_file.clone()
-        } else {
-            self.get_home_dir().join(&malachite_config.node_key_file)
-        };
-        let node_key_str = fs::read_to_string(&node_key_path).map_err(|e| {
-            eyre!(
-                "Failed to read P2P node_key file from {:?}: {}",
-                node_key_path,
-                e
-            )
-        })?;
-        let node_key: NodeKey = serde_json::from_str(&node_key_str).map_err(|e| {
-            eyre!(
-                "Failed to parse P2P node_key file from {:?}: {}",
-                node_key_path,
-                e
-            )
-        })?;
-        info!("Loaded P2P NodeKey: {}", node_key.public_key().to_string());
-
         info!("Calling malachitebft_app_channel::start_engine...");
         let (channels, engine_handle) = malachite_start_engine(
             aura_malachite_ctx.clone(),
-            codec,
-            priv_validator_key,
-            node_key,
+            codec.clone(),
+            self.clone(),
             malachite_config.clone(),
+            None,
             initial_validator_set,
         )
         .await?;
@@ -234,10 +213,14 @@ impl MalachiteAppNode for AuraNode {
         let tx_event_channel = channels.events.clone();
         let app_logic_task_span =
             tracing::info_span!("app_message_loop", moniker = %malachite_config.moniker);
-        let app_logic_handle = tokio::spawn(
-            app_message_loop(app_state_arc, aura_malachite_ctx, channels)
-                .instrument(app_logic_task_span),
-        );
+        let app_logic_handle = tokio::spawn(async move {
+            if let Err(e) = app_message_loop(app_state_arc, aura_malachite_ctx, channels)
+                .instrument(app_logic_task_span)
+                .await
+            {
+                error!(?e, "Application message loop exited with error");
+            }
+        });
         info!("Spawned application message loop task.");
 
         Ok(AuraNodeRunningHandle {
@@ -282,24 +265,19 @@ async fn app_message_loop(
                         state_guard.current_height = height.as_u64();
                         state_guard.current_round = round;
                         info!(%height, %round, %proposer, "AppLoop: Started round.");
-                         if reply_value.send(None).is_err() {
+                         if reply_value.send(Vec::new()).is_err() {
                             error!("AppLoop: Failed to send reply for StartedRound (value reply)");
                          }
                     }
                     AppMsg::GetValue { height, round, reply, .. } => {
                         info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
 
-                        let new_aura_block = crate::state::Block {
-                            height: height.as_u64(),
-                            proposer_address: "aura_node_self_proposing".to_string(),
-                            timestamp: chrono::Utc::now().timestamp(),
-                            transactions: vec![],
-                        };
+                        let test_value = TestValue::new(height.as_u64());
 
                         let locally_proposed_value = LocallyProposedValue {
                             height,
                             round,
-                            value: new_aura_block.clone(),
+                            value: test_value,
                         };
 
                         if reply.send(locally_proposed_value).is_err() {
@@ -356,7 +334,7 @@ async fn app_message_loop(
                     AppMsg::GetValidatorSet { height, reply } => {
                         info!("AppLoop: GetValidatorSet called for height {}", height);
                         let vs_placeholder = TestValidatorSet::new(vec![]);
-                        if reply.send(vs_placeholder).is_err() {
+                        if reply.send(Some(vs_placeholder)).is_err() {
                             error!("AppLoop: Failed to send GetValidatorSet reply");
                         }
                     }
@@ -375,12 +353,19 @@ async fn app_message_loop(
                     }
                     AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes, reply } => {
                         info!(%height, %round, "AppLoop: Processing synced value ({} bytes)", value_bytes.len());
-                        if reply.send(None).is_err() {
+                        let placeholder_value = TestValue::new(height.as_u64());
+                        let proposed = ProposedValue {
+                            height,
+                            round,
+                            valid_round: Round::Nil,
+                            proposer,
+                            value: placeholder_value,
+                            validity: Validity::Valid,
+                        };
+                        if reply.send(proposed).is_err() {
                            error!("AppLoop: Failed to send ProcessSyncedValue reply");
                         }
                     }
-                    AppMsg::PeerJoined { peer_id } => { info!(%peer_id, "AppLoop: Peer joined."); }
-                    AppMsg::PeerLeft { peer_id } => { info!(%peer_id, "AppLoop: Peer left.");}
                     _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                 }
             }
@@ -407,8 +392,6 @@ fn msg_type_name(msg: &AppMsg<TestContext>) -> &'static str {
         AppMsg::Decided { .. } => "Decided",
         AppMsg::GetDecidedValue { .. } => "GetDecidedValue",
         AppMsg::ProcessSyncedValue { .. } => "ProcessSyncedValue",
-        AppMsg::PeerJoined { .. } => "PeerJoined",
-        AppMsg::PeerLeft { .. } => "PeerLeft",
         #[allow(unreachable_patterns)]
         _ => "UnknownAppMsg",
     }

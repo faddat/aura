@@ -10,13 +10,13 @@ use tracing::{debug, error, info, warn};
 use crate::{Error, Result as AuraResult};
 
 // Derive Ord and PartialOrd for Block and ValidatorUpdate
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorUpdate {
     pub pub_key: Vec<u8>,
     pub power: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub height: u64,
     pub proposer_address: String,
@@ -91,7 +91,7 @@ impl AuraState {
         info!(
             "AuraState initialized. Current height: {}, App hash: {}",
             current_height,
-            hex::encode(current_app_hash) // Corrected typo: current_app_hash
+            hex::encode(&current_app_hash)
         );
         Ok(Self {
             db,

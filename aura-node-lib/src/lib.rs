@@ -11,12 +11,14 @@ pub use malachitebft_core_types;
 pub use malachitebft_engine;
 pub use malachitebft_peer;
 
-mod application;
-pub mod config; // Make config module public
+mod config; // Make config module public
 pub mod node; // Make node module public to access AuraNode
 mod state;
 
-pub use application::AuraApplication;
+// application module temporarily disabled until ABCI shim updated
+// mod application;
+// pub use application::AuraApplication;
+
 pub use config::AuraNodeConfig;
 pub use node::AuraNode; // Export AuraNode
 pub use state::{AuraState, Block, ValidatorUpdate}; // Export ValidatorUpdate as well
