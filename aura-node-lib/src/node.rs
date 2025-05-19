@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -264,6 +265,7 @@ async fn app_message_loop(
     signing_provider: Ed25519Provider,
     node_address: TestAddress,
 ) -> eyre::Result<()> {
+    let mut proposal_buffers: HashMap<String, (TestHeight, Round, TestAddress)> = HashMap::new();
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
@@ -323,13 +325,50 @@ async fn app_message_loop(
                         }
                     }
                     AppMsg::ReceivedProposalPart { from, part, reply } => {
+                        use malachitebft_engine::util::streaming::StreamContent;
                         let part_type_str = match &part.content {
                             StreamContent::Data(p) => format!("{:?}", p),
                             StreamContent::Fin => "Fin".to_string(),
                         };
                         info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
-                        if reply.send(None).is_err() {
-                             error!("AppLoop: Failed to send ReceivedProposalPart reply");
+
+                        // Key the buffer by the raw StreamId bytes to avoid trait bounds issues.
+                        let stream_key = format!("{:?}", part.stream_id);
+
+                        match &part.content {
+                            StreamContent::Data(ProposalPart::Init(init)) => {
+                                proposal_buffers.insert(stream_key.clone(), (init.height, init.round, init.proposer));
+                                if reply.send(None).is_err() {
+                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
+                                }
+                            }
+                            StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
+                                if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key) {
+                                    // Reconstruct placeholder value identical to proposer's.
+                                    let placeholder_value = TestValue::new(height.as_u64());
+                                    let proposed = ProposedValue {
+                                        height,
+                                        round,
+                                        valid_round: Round::Nil,
+                                        proposer,
+                                        value: placeholder_value,
+                                        validity: Validity::Valid,
+                                    };
+                                    if reply.send(Some(proposed)).is_err() {
+                                        error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
+                                    }
+                                } else {
+                                    // We don't have Init yet; just reply None.
+                                    if reply.send(None).is_err() {
+                                        error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
+                                    }
+                                }
+                            }
+                            _ => {
+                                if reply.send(None).is_err() {
+                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Other)");
+                                }
+                            }
                         }
                     }
                     AppMsg::Decided { certificate, extensions: _, reply } => {
