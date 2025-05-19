@@ -5,10 +5,10 @@ magical, simple private currency in rust
 ## Thesis
 
 * Monero is [actually broken](https://duke.hush.is/memos/6/), and it got broken because bulletproofs aren't ZK proofs
-* Zcash has a vastly too tiny anonymity set
+* Transparency and privacy don't mix
 * Reorgs are essentially a bug, so we're using tendermint consensus
 * IBC actually matters
-* A validator set consisting of equally weighted nodes without staking and slashing can work just fine
+* Slashing isn't needed
 * Inflation isn't needed
 * Relatively high tx fees are needed
 * Code AND supply need to be auditable
