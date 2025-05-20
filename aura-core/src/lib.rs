@@ -1,5 +1,3 @@
-#![cfg_attr(feature = "mock-zkp", allow(unused_variables, unused_imports))]
-
 pub mod address;
 pub mod crypto;
 pub mod error;

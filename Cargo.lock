@@ -629,7 +629,9 @@ dependencies = [
 name = "aura-wallet-lib"
 version = "0.1.0"
 dependencies = [
+ "ark-crypto-primitives",
  "ark-ff",
+ "ark-serialize",
  "ark-std",
  "aura-core",
  "rand 0.9.1",
