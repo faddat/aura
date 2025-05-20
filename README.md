@@ -55,6 +55,31 @@ timeout_precommit_ms = 1000
 timeout_commit_ms    = 1000
 ```
 
+## Using Malachite
+
+Aura connects to the Malachite consensus engine through the
+[malachitebft_app_channel] crate.  The node expects a `malachite.toml` file in
+its home directory with standard Malachite configuration values.
+
+### Channel messages
+
+The implementation currently handles the following message types:
+
+```
+ConsensusReady
+StartedRound
+GetValue
+ExtendVote
+VerifyVoteExtension
+RestreamProposal
+GetHistoryMinHeight
+ReceivedProposalPart
+GetValidatorSet
+Decided
+GetDecidedValue
+ProcessSyncedValue
+```
+
 
 ## Status
 
