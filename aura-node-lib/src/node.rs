@@ -256,7 +256,7 @@ impl MalachiteAppNode for AuraNode {
     }
 }
 
-async fn app_message_loop(
+pub(crate) async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
     _ctx: TestContext,
     mut channels: Channels<TestContext>,
@@ -370,6 +370,12 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                             }
                         }
                     }
+                    AppMsg::RestreamProposal { height, round, .. } => {
+                        info!(%height, %round, "AppLoop: Restream proposal");
+                        if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
+                            error!(?e, "AppLoop: Failed to restream proposal parts");
+                        }
+                    }
                     AppMsg::Decided { certificate, extensions: _, reply } => {
                         info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "AppLoop: Consensus decided. Committing block.");
                         let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for Decided: {}", e))?;
@@ -398,11 +404,27 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                             }
                         }
                     }
-                    AppMsg::ExtendVote { reply, .. } => {
-                        if reply.send(None).is_err() { error!("AppLoop: Failed to send ExtendVote reply"); }
+                    AppMsg::ExtendVote { height, round, reply } => {
+                        let mut hasher = Keccak256::new();
+                        hasher.update(height.as_u64().to_be_bytes());
+                        hasher.update(round.as_i64().to_be_bytes());
+                        hasher.update(1u64.to_be_bytes());
+                        let hash = hasher.finalize();
+                        let sig = signing_provider.sign(&hash);
+                        if reply.send(Some(sig)).is_err() {
+                            error!("AppLoop: Failed to send ExtendVote reply");
+                        }
                     }
-                    AppMsg::VerifyVoteExtension { reply, .. } => {
-                        if reply.send(Ok(())).is_err() { error!("AppLoop: Failed to send VerifyVoteExtension reply");}
+                    AppMsg::VerifyVoteExtension { height, round, extension, address, reply } => {
+                        let mut hasher = Keccak256::new();
+                        hasher.update(height.as_u64().to_be_bytes());
+                        hasher.update(round.as_i64().to_be_bytes());
+                        hasher.update(1u64.to_be_bytes());
+                        let hash = hasher.finalize();
+                        let verify_res = Ed25519Provider::verify(&address, &hash, &extension).map_err(|e| eyre!("verify failed: {:?}", e));
+                        if reply.send(verify_res).is_err() {
+                            error!("AppLoop: Failed to send VerifyVoteExtension reply");
+                        }
                     }
                     AppMsg::GetValidatorSet { height, reply } => {
                         info!("AppLoop: GetValidatorSet called for height {}", height);
@@ -411,28 +433,43 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                         }
                     }
                     AppMsg::GetHistoryMinHeight { reply } => {
-                         info!("AppLoop: GetHistoryMinHeight called");
-                        let min_h_placeholder = TestHeight::new(0);
-                        if reply.send(min_h_placeholder).is_err() {
-                             error!("AppLoop: Failed to send GetHistoryMinHeight reply");
+                        info!("AppLoop: GetHistoryMinHeight called");
+                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
+                        let min_h = TestHeight::new(state.history_min_height());
+                        if reply.send(min_h).is_err() {
+                            error!("AppLoop: Failed to send GetHistoryMinHeight reply");
                         }
                     }
-                     AppMsg::GetDecidedValue { height, reply } => {
+                    AppMsg::GetDecidedValue { height, reply } => {
                         info!("AppLoop: GetDecidedValue called for height {}", height);
-                        if reply.send(None).is_err() {
-                            error!("AppLoop: Failed to send GetDecidedValue reply");
+                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
+                        let maybe_block = state.get_block(height.as_u64())?;
+                        if let Some(block) = maybe_block {
+                            let proposed = ProposedValue {
+                                height,
+                                round: state.current_round,
+                                valid_round: Round::Nil,
+                                proposer: node_address,
+                                value: TestValue::new(block.height),
+                                validity: Validity::Valid,
+                            };
+                            if reply.send(Some(proposed)).is_err() {
+                                error!("AppLoop: Failed to send GetDecidedValue reply (Some)");
+                            }
+                        } else if reply.send(None).is_err() {
+                            error!("AppLoop: Failed to send GetDecidedValue reply (None)");
                         }
                     }
-                    AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes, reply } => {
-                        info!(%height, %round, "AppLoop: Processing synced value ({} bytes)", value_bytes.len());
-                        let placeholder_value = TestValue::new(height.as_u64());
+                    AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes: _, reply } => {
+                        info!(%height, %round, "AppLoop: Processing synced value");
+                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
                         let proposed = ProposedValue {
                             height,
                             round,
                             valid_round: Round::Nil,
                             proposer,
-                            value: placeholder_value,
-                            validity: Validity::Valid,
+                            value: TestValue::new(height.as_u64()),
+                            validity: if state.get_block(height.as_u64())?.is_some() { Validity::Valid } else { Validity::Invalid },
                         };
                         if reply.send(proposed).is_err() {
                            error!("AppLoop: Failed to send ProcessSyncedValue reply");
