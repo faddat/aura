@@ -538,9 +538,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-std",
+ "attohttpc",
  "aura-core",
  "aura-node-lib",
  "aura-wallet-lib",
+ "bech32",
  "clap",
  "config 0.15.11",
  "futures",
