@@ -4,6 +4,7 @@ This repository is a Rust workspace. Contributions should follow these rules:
 
 ## Style
 1. Merge the main branch into the branch you're working on before working.
+2. Always rely on AGENTS.md from the `main` branch, even if you're working on a different branch
 
 ## Programmatic Checks
 1. Format code with `cargo fmt --all` before committing. Verify with `cargo fmt --all -- --check`.
