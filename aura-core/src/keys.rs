@@ -3,7 +3,7 @@ use crate::{AURA_ADDR_HRP, AuraAddress, CurveFr, CurveG1};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{BigInteger as ArkBigInteger, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::rand::{RngCore, SeedableRng, rngs::StdRng};
+use ark_std::rand::{SeedableRng, rngs::StdRng};
 use bip39::{Language, Mnemonic};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;

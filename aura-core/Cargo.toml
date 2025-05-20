@@ -68,7 +68,7 @@ ark-std = { version = "0.5.0", default-features = false, features = [
 tracing = { version = "0.1", optional = true }
 
 [features]
-default = ["std", "mock-zkp"]
+default = ["std"]
 std = [
     "ark-ff/std",
     "ark-ec/std",
@@ -81,6 +81,5 @@ std = [
     "ark-std/std",
     "dep:tracing",               # Enable tracing when std is enabled
 ]
-mock-zkp = []
 parallel = ["ark-std/parallel"]
 tracing = ["dep:tracing"] # Add explicit tracing feature

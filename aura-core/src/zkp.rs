@@ -2,11 +2,7 @@ use crate::note::poseidon_config;
 use crate::transaction::ZkProofData;
 use crate::{AuraCurve, CoreError, CurveFr};
 use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
-use ark_crypto_primitives::sponge::{
-    CryptographicSponge, FieldBasedCryptographicSponge,
-    poseidon::{PoseidonSponge, constraints::PoseidonSpongeVar},
-};
-use ark_ff::PrimeField;
+use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 use ark_ff::Zero;
 use ark_groth16::{
     Groth16, PreparedVerifyingKey, Proof, ProvingKey, VerifyingKey, prepare_verifying_key,
@@ -18,7 +14,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 use ark_std::io::BufReader;
-use ark_std::rand::{RngCore, SeedableRng, rngs::StdRng};
+use ark_std::rand::{SeedableRng, rngs::StdRng};
 use ark_std::vec::Vec;
 use std::fs::File;
 use std::path::Path;
@@ -71,7 +67,7 @@ impl ConstraintSynthesizer<CurveFr> for TransferCircuit {
                 .map(CurveFr::from)
                 .ok_or(SynthesisError::AssignmentMissing)
         })?;
-        let input_owner = FpVar::<CurveFr>::new_witness(cs.clone(), || {
+        let _input_owner = FpVar::<CurveFr>::new_witness(cs.clone(), || {
             self.input_note_owner_pk_hash
                 .ok_or(SynthesisError::AssignmentMissing)
         })?;

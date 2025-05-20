@@ -2,12 +2,16 @@
 //!
 //! This library provides wallet functionality for the Aura blockchain.
 
-use ark_ff::UniformRand;
-use ark_std::rand::{SeedableRng, rngs::StdRng};
+use ark_crypto_primitives::sponge::{
+    CryptographicSponge, FieldBasedCryptographicSponge, poseidon::PoseidonSponge,
+};
+use ark_ff::{PrimeField, UniformRand};
+use ark_std::rand::{rngs::StdRng, SeedableRng};
+use ark_serialize::CanonicalSerialize;
 use aura_core::keys::{generate_keypair_from_seed_phrase_str, generate_new_keypair_and_seed};
 use aura_core::{
     CurveFr, Fee, Memo, Note, Nullifier, PrivateKey, PublicKey, SeedPhrase, Transaction,
-    ZkProofData,
+    ZkpHandler, ZkpParameters, poseidon_config,
 };
 
 /// Represents an in-memory wallet keypair with optional seed phrase.
@@ -115,6 +119,7 @@ impl Wallet {
         recipient: &aura_core::AuraAddress,
         amount: u64,
         fee: u64,
+        params: &ZkpParameters,
     ) -> Result<(Transaction, Note), aura_core::CoreError> {
         if amount + fee > input_note.value {
             return Err(aura_core::CoreError::InsufficientFunds);
@@ -127,6 +132,7 @@ impl Wallet {
         let mut rng = StdRng::from_seed(seed);
         let out_randomness = CurveFr::rand(&mut rng);
         let change_randomness = CurveFr::rand(&mut rng);
+        let anchor = CurveFr::rand(&mut rng);
 
         let output_note = Note::new(amount, recipient, out_randomness);
         let change_note = Note::new(change_value, &self.address, change_randomness);
@@ -137,14 +143,75 @@ impl Wallet {
         let nullifier =
             Nullifier::new_outside_circuit(&input_note.randomness, &self.private_key.0)?;
 
+        // Helper hashes for circuit
+        let mut sponge = PoseidonSponge::new(&poseidon_config());
+        sponge.absorb(&input_note.randomness);
+        sponge.absorb(&self.private_key.0);
+        let expected_nullifier = sponge.squeeze_native_field_elements(1)[0];
+
+        let mut sponge1 = PoseidonSponge::new(&poseidon_config());
+        sponge1.absorb(&CurveFr::from(amount));
+        sponge1.absorb(&CurveFr::from_le_bytes_mod_order(recipient.payload()));
+        sponge1.absorb(&out_randomness);
+        let expected_out_commit = sponge1.squeeze_native_field_elements(1)[0];
+
+        let mut sponge2 = PoseidonSponge::new(&poseidon_config());
+        sponge2.absorb(&CurveFr::from(change_value));
+        sponge2.absorb(&CurveFr::from_le_bytes_mod_order(self.address.payload()));
+        sponge2.absorb(&change_randomness);
+        let expected_change_commit = sponge2.squeeze_native_field_elements(1)[0];
+
+        let circuit = aura_core::TransferCircuit {
+            input_note_value: Some(input_note.value),
+            input_note_owner_pk_hash: Some(CurveFr::from_le_bytes_mod_order(
+                &input_note.owner_pk_info,
+            )),
+            input_note_randomness: Some(input_note.randomness),
+            input_spending_key_scalar: Some(self.private_key.0),
+            output1_note_value: Some(amount),
+            output1_note_owner_pk_hash: Some(CurveFr::from_le_bytes_mod_order(recipient.payload())),
+            output1_note_randomness: Some(out_randomness),
+            output2_note_value: Some(change_value),
+            output2_note_owner_pk_hash: Some(CurveFr::from_le_bytes_mod_order(
+                self.address.payload(),
+            )),
+            output2_note_randomness: Some(change_randomness),
+            anchor: Some(anchor),
+            fee: Some(fee),
+            expected_nullifier: Some(expected_nullifier),
+            expected_output1_commitment: Some(expected_out_commit),
+            expected_output2_commitment: Some(expected_change_commit),
+        };
+
+        let proof = ZkpHandler::generate_proof(&params.proving_key, circuit)?;
+        let public_inputs = ZkpHandler::prepare_public_inputs_for_verification(
+            anchor,
+            fee,
+            expected_nullifier,
+            expected_out_commit,
+            expected_change_commit,
+        );
+        if !ZkpHandler::verify_proof(&params.prepared_verifying_key, &public_inputs, &proof)? {
+            return Err(aura_core::CoreError::ProofVerification(
+                "self-verification failed".to_string(),
+            ));
+        }
+
+        let mut anchor_bytes = Vec::new();
+        anchor
+            .serialize_compressed(&mut anchor_bytes)
+            .map_err(|e| aura_core::CoreError::Serialization(e.to_string()))?;
+        let anchor_arr: [u8; 32] = anchor_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| aura_core::CoreError::Serialization("Invalid length".to_string()))?;
+
         let tx = Transaction {
             spent_nullifiers: vec![nullifier],
             new_note_commitments: vec![output_commit, change_commit],
-            zk_proof_data: ZkProofData {
-                proof_bytes: Vec::new(),
-            },
+            zk_proof_data: proof,
             fee: Fee(fee),
-            anchor: [0u8; 32],
+            anchor: anchor_arr,
             memo: Memo(Vec::new()),
         };
 
