@@ -268,197 +268,197 @@ pub async fn app_message_loop(
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
-            Some(msg) = channels.consensus.recv() => {
-                debug!("AppLoop: Received AppMsg from consensus: {}", msg_type_name(&msg));
-                match msg {
-                    AppMsg::ConsensusReady { reply, .. } => {
-                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for ConsensusReady: {}", e))?;
-                        let start_height = if state.height_value() == 0 {
-                            TestHeight::new(1)
-                        } else {
-                            TestHeight::new(state.height_value() + 1)
-                        };
-                        let validator_set = initial_validator_set.clone();
-                        info!(%start_height, "AppLoop: Consensus is ready. Replying with StartHeight.");
-                        if reply.send((start_height, validator_set)).is_err() {
-                            error!("AppLoop: Failed to send ConsensusReady reply (StartHeight)");
-                        }
-                    }
-                    AppMsg::StartedRound { height, round, proposer, reply_value } => {
-                        let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for StartedRound: {}", e))?;
-                        // Begin a new block for this height so commit will be successful later
-                        let ts = Utc::now().timestamp();
-                        let proposer_bytes = proposer.into_inner().to_vec();
-                        if let Err(e) = state_guard.begin_block(height.as_u64(), proposer_bytes, ts) {
-                            error!("AppLoop: begin_block failed: {:?}", e);
-                        }
-                        // Do NOT bump committed current_height here; we only track the committed height.
-                        state_guard.current_round = round;
-                        info!(%height, %round, %proposer, "AppLoop: Started round.");
-                         if reply_value.send(Vec::new()).is_err() {
-                            error!("AppLoop: Failed to send reply for StartedRound (value reply)");
-                         }
-                    }
-                    AppMsg::GetValue { height, round, reply, .. } => {
-                        info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
-
-                        let test_value = TestValue::new(height.as_u64());
-
-                        let locally_proposed_value = LocallyProposedValue {
-                            height,
-                            round,
-                            value: test_value,
-                        };
-
-                        if reply.send(locally_proposed_value).is_err() {
-                            error!("AppLoop: Failed to send GetValue reply (LocallyProposedValue)");
-                        }
-
-                        // Stream a minimal set of proposal parts so that peers
-                        // can assemble the value if needed. This is a very
-                        // small placeholder implementation that should be
-                        // replaced with proper block streaming logic once the
-                        // Aura block structure is finalised.
-                        if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
-                            error!(?e, "AppLoop: Failed to stream proposal parts");
-                        }
-                    }
-                    AppMsg::ReceivedProposalPart { from, part, reply } => {
-                        use malachitebft_engine::util::streaming::StreamContent;
-                        let part_type_str = match &part.content {
-                            StreamContent::Data(p) => format!("{:?}", p),
-                            StreamContent::Fin => "Fin".to_string(),
-                        };
-                        info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
-
-                        // Key the buffer directly by StreamId for stability and efficiency.
-                        let stream_key = part.stream_id.clone();
-
-                        match &part.content {
-                            StreamContent::Data(ProposalPart::Init(init)) => {
-proposal_buffers.insert(stream_key.to_string(), (init.height, init.round, init.proposer));
-                                if reply.send(None).is_err() {
-                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
-                                }
-                            }
-                            StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
-if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_string()) {
-                                    // Reconstruct placeholder value identical to proposer's.
-                                    let placeholder_value = TestValue::new(height.as_u64());
-                                    let proposed = ProposedValue {
-                                        height,
-                                        round,
-                                        valid_round: Round::Nil,
-                                        proposer,
-                                        value: placeholder_value,
-                                        validity: Validity::Valid,
-                                    };
-                                    if reply.send(Some(proposed)).is_err() {
-                                        error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
-                                    }
+                    Some(msg) = channels.consensus.recv() => {
+                        debug!("AppLoop: Received AppMsg from consensus: {}", msg_type_name(&msg));
+                        match msg {
+                            AppMsg::ConsensusReady { reply, .. } => {
+                                let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for ConsensusReady: {}", e))?;
+                                let start_height = if state.height_value() == 0 {
+                                    TestHeight::new(1)
                                 } else {
-                                    // We don't have Init yet; just reply None.
-                                    if reply.send(None).is_err() {
-                                        error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
+                                    TestHeight::new(state.height_value() + 1)
+                                };
+                                let validator_set = initial_validator_set.clone();
+                                info!(%start_height, "AppLoop: Consensus is ready. Replying with StartHeight.");
+                                if reply.send((start_height, validator_set)).is_err() {
+                                    error!("AppLoop: Failed to send ConsensusReady reply (StartHeight)");
+                                }
+                            }
+                            AppMsg::StartedRound { height, round, proposer, reply_value } => {
+                                let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for StartedRound: {}", e))?;
+                                // Begin a new block for this height so commit will be successful later
+                                let ts = Utc::now().timestamp();
+                                let proposer_bytes = proposer.into_inner().to_vec();
+                                if let Err(e) = state_guard.begin_block(height.as_u64(), proposer_bytes, ts) {
+                                    error!("AppLoop: begin_block failed: {:?}", e);
+                                }
+                                // Do NOT bump committed current_height here; we only track the committed height.
+                                state_guard.current_round = round;
+                                info!(%height, %round, %proposer, "AppLoop: Started round.");
+                                 if reply_value.send(Vec::new()).is_err() {
+                                    error!("AppLoop: Failed to send reply for StartedRound (value reply)");
+                                 }
+                            }
+                            AppMsg::GetValue { height, round, reply, .. } => {
+                                info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
+
+                                let test_value = TestValue::new(height.as_u64());
+
+                                let locally_proposed_value = LocallyProposedValue {
+                                    height,
+                                    round,
+                                    value: test_value,
+                                };
+
+                                if reply.send(locally_proposed_value).is_err() {
+                                    error!("AppLoop: Failed to send GetValue reply (LocallyProposedValue)");
+                                }
+
+                                // Stream a minimal set of proposal parts so that peers
+                                // can assemble the value if needed. This is a very
+                                // small placeholder implementation that should be
+                                // replaced with proper block streaming logic once the
+                                // Aura block structure is finalised.
+                                if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
+                                    error!(?e, "AppLoop: Failed to stream proposal parts");
+                                }
+                            }
+                            AppMsg::ReceivedProposalPart { from, part, reply } => {
+                                use malachitebft_engine::util::streaming::StreamContent;
+                                let part_type_str = match &part.content {
+                                    StreamContent::Data(p) => format!("{:?}", p),
+                                    StreamContent::Fin => "Fin".to_string(),
+                                };
+                                info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
+
+                                // Key the buffer directly by StreamId for stability and efficiency.
+                                let stream_key = part.stream_id.clone();
+
+                                match &part.content {
+                                    StreamContent::Data(ProposalPart::Init(init)) => {
+        proposal_buffers.insert(stream_key.to_string(), (init.height, init.round, init.proposer));
+                                        if reply.send(None).is_err() {
+                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
+                                        }
+                                    }
+                                    StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
+        if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_string()) {
+                                            // Reconstruct placeholder value identical to proposer's.
+                                            let placeholder_value = TestValue::new(height.as_u64());
+                                            let proposed = ProposedValue {
+                                                height,
+                                                round,
+                                                valid_round: Round::Nil,
+                                                proposer,
+                                                value: placeholder_value,
+                                                validity: Validity::Valid,
+                                            };
+                                            if reply.send(Some(proposed)).is_err() {
+                                                error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
+                                            }
+                                        } else {
+                                            // We don't have Init yet; just reply None.
+                                            if reply.send(None).is_err() {
+                                                error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        if reply.send(None).is_err() {
+                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Other)");
+                                        }
                                     }
                                 }
                             }
-                            _ => {
+                            AppMsg::RestreamProposal { height, round, .. } => {
+                                info!(%height, %round, "AppLoop: Restream proposal");
+                                if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
+                                    error!(?e, "AppLoop: Failed to restream proposal parts");
+                                }
+                            }
+                            AppMsg::Decided { certificate, extensions: _, reply } => {
+                                info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "AppLoop: Consensus decided. Committing block.");
+                                let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for Decided: {}", e))?;
+
+                                if certificate.height.as_u64() != state_guard.pending_block_height {
+                                     error!("AppLoop: Decided height {} does not match pending block height {}. This indicates a potential state mismatch or missed BeginBlock call.",
+                                        certificate.height.as_u64(), state_guard.pending_block_height);
+                                }
+
+                                match state_guard.commit_block() {
+                                    Ok(_app_hash) => {
+                                        let next_height = TestHeight::new(state_guard.height_value() + 1);
+                                        let validator_set = initial_validator_set.clone();
+                                        info!("AppLoop: Commit successful. Replying to start next height: {}", next_height);
+                                        if reply.send(ConsensusMsg::StartHeight(next_height, validator_set)).is_err() {
+                                            error!("AppLoop: Failed to send Decided reply (StartHeight)");
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("AppLoop: Commit failed after Decided: {:?}. Requesting restart for height {}.", e, state_guard.pending_block_height);
+                                        let current_pending_height = TestHeight::new(state_guard.pending_block_height);
+                                        let validator_set = initial_validator_set.clone();
+                                        if reply.send(ConsensusMsg::RestartHeight(current_pending_height, validator_set)).is_err() {
+                                             error!("AppLoop: Failed to send Decided reply (RestartHeight)");
+                                        }
+                                    }
+                                }
+                            }
+                            AppMsg::ExtendVote { reply, .. } => {
                                 if reply.send(None).is_err() {
-                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Other)");
+                                    error!("AppLoop: Failed to send ExtendVote reply");
                                 }
                             }
-                        }
-                    }
-                    AppMsg::RestreamProposal { height, round, .. } => {
-                        info!(%height, %round, "AppLoop: Restream proposal");
-                        if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
-                            error!(?e, "AppLoop: Failed to restream proposal parts");
-                        }
-                    }
-                    AppMsg::Decided { certificate, extensions: _, reply } => {
-                        info!(height = %certificate.height, round = %certificate.round, value_id = %certificate.value_id, "AppLoop: Consensus decided. Committing block.");
-                        let mut state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock for Decided: {}", e))?;
-
-                        if certificate.height.as_u64() != state_guard.pending_block_height {
-                             error!("AppLoop: Decided height {} does not match pending block height {}. This indicates a potential state mismatch or missed BeginBlock call.",
-                                certificate.height.as_u64(), state_guard.pending_block_height);
-                        }
-
-                        match state_guard.commit_block() {
-                            Ok(_app_hash) => {
-                                let next_height = TestHeight::new(state_guard.height_value() + 1);
-                                let validator_set = initial_validator_set.clone();
-                                info!("AppLoop: Commit successful. Replying to start next height: {}", next_height);
-                                if reply.send(ConsensusMsg::StartHeight(next_height, validator_set)).is_err() {
-                                    error!("AppLoop: Failed to send Decided reply (StartHeight)");
+                            AppMsg::VerifyVoteExtension { reply, .. } => {
+                                if reply.send(Ok(())).is_err() {
+                                    error!("AppLoop: Failed to send VerifyVoteExtension reply");
                                 }
                             }
-                            Err(e) => {
-                                error!("AppLoop: Commit failed after Decided: {:?}. Requesting restart for height {}.", e, state_guard.pending_block_height);
-                                let current_pending_height = TestHeight::new(state_guard.pending_block_height);
-                                let validator_set = initial_validator_set.clone();
-                                if reply.send(ConsensusMsg::RestartHeight(current_pending_height, validator_set)).is_err() {
-                                     error!("AppLoop: Failed to send Decided reply (RestartHeight)");
+                            AppMsg::GetValidatorSet { height, reply } => {
+                                info!("AppLoop: GetValidatorSet called for height {}", height);
+                                if reply.send(Some(initial_validator_set.clone())).is_err() {
+                                    error!("AppLoop: Failed to send GetValidatorSet reply");
                                 }
                             }
+                            AppMsg::GetHistoryMinHeight { reply } => {
+                                info!("AppLoop: GetHistoryMinHeight called");
+                                let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
+                                let min_h = TestHeight::new(state.history_min_height());
+                                if reply.send(min_h).is_err() {
+                                    error!("AppLoop: Failed to send GetHistoryMinHeight reply");
+                                }
+                            }
+                            AppMsg::GetDecidedValue { height, reply } => {
+                                info!("AppLoop: GetDecidedValue called for height {}", height);
+                                let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
+                                let _ = state.get_block(height.as_u64())?;
+                                if reply.send(None).is_err() {
+                                    error!("AppLoop: Failed to send GetDecidedValue reply");
+                                }
+                            }
+                            AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes: _, reply } => {
+                                info!(%height, %round, "AppLoop: Processing synced value");
+                                let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
+                                let proposed = ProposedValue {
+                                    height,
+                                    round,
+                                    valid_round: Round::Nil,
+                                    proposer,
+                                    value: TestValue::new(height.as_u64()),
+                                    validity: if state.get_block(height.as_u64())?.is_some() { Validity::Valid } else { Validity::Invalid },
+                                };
+                                if reply.send(proposed).is_err() {
+                                   error!("AppLoop: Failed to send ProcessSyncedValue reply");
+                                }
+                            }
+                            _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                         }
                     }
-                    AppMsg::ExtendVote { reply, .. } => {
-                        if reply.send(None).is_err() {
-                            error!("AppLoop: Failed to send ExtendVote reply");
-                        }
+                    else => {
+                        info!("AppLoop: Consensus channel closed or select! macro completed. Exiting loop.");
+                        break;
                     }
-                    AppMsg::VerifyVoteExtension { reply, .. } => {
-                        if reply.send(Ok(())).is_err() {
-                            error!("AppLoop: Failed to send VerifyVoteExtension reply");
-                        }
-                    }
-                    AppMsg::GetValidatorSet { height, reply } => {
-                        info!("AppLoop: GetValidatorSet called for height {}", height);
-                        if reply.send(Some(initial_validator_set.clone())).is_err() {
-                            error!("AppLoop: Failed to send GetValidatorSet reply");
-                        }
-                    }
-                    AppMsg::GetHistoryMinHeight { reply } => {
-                        info!("AppLoop: GetHistoryMinHeight called");
-                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
-                        let min_h = TestHeight::new(state.history_min_height());
-                        if reply.send(min_h).is_err() {
-                            error!("AppLoop: Failed to send GetHistoryMinHeight reply");
-                        }
-                    }
-                    AppMsg::GetDecidedValue { height, reply } => {
-                        info!("AppLoop: GetDecidedValue called for height {}", height);
-                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
-                        let _ = state.get_block(height.as_u64())?;
-                        if reply.send(None).is_err() {
-                            error!("AppLoop: Failed to send GetDecidedValue reply");
-                        }
-                    }
-                    AppMsg::ProcessSyncedValue { height, round, proposer, value_bytes: _, reply } => {
-                        info!(%height, %round, "AppLoop: Processing synced value");
-                        let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
-                        let proposed = ProposedValue {
-                            height,
-                            round,
-                            valid_round: Round::Nil,
-                            proposer,
-                            value: TestValue::new(height.as_u64()),
-                            validity: if state.get_block(height.as_u64())?.is_some() { Validity::Valid } else { Validity::Invalid },
-                        };
-                        if reply.send(proposed).is_err() {
-                           error!("AppLoop: Failed to send ProcessSyncedValue reply");
-                        }
-                    }
-                    _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                 }
-            }
-            else => {
-                info!("AppLoop: Consensus channel closed or select! macro completed. Exiting loop.");
-                break;
-            }
-        }
     }
     Ok(())
 }
