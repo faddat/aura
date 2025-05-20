@@ -48,6 +48,8 @@ sha2 = "0.10.9"                                    # Using sha2, removed separat
 once_cell = "1.19.0"                               # For Lazy statics
 bytes = "1"
 sha3 = "0.10"
+getrandom = "0.3.3"
+rand_core = "0.9.3"
 
 [dev-dependencies]
 tempfile = "3"

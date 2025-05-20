@@ -12,7 +12,6 @@ use malachitebft_test::{
     Address as TestAddress, Ed25519Provider, Height as TestHeight, ProposalFin, ProposalInit,
     ProposalPart, TestContext, Validator, ValidatorSet as TestValidatorSet, Value as TestValue,
 };
-use rand::thread_rng;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -51,7 +50,8 @@ async fn setup() -> TestEnv {
     };
     let ctx = TestContext::default();
 
-    let sk = Ed25519PrivateKey::generate(thread_rng());
+    // Generate a random private key for testing
+    let sk = generate_test_private_key();
     let validator = Validator::new(sk.public_key(), 1 as VotingPower);
     let validators = TestValidatorSet::new(vec![validator]);
     let signing = Ed25519Provider::new(sk);
@@ -391,4 +391,20 @@ async fn test_process_synced_value() {
     assert_eq!(res.validity, Validity::Invalid);
 
     env.shutdown().await;
+}
+
+// Helper function to generate a random private key for tests
+fn generate_test_private_key() -> Ed25519PrivateKey {
+    // Create a random seed - use system time for entropy
+    let seed: [u8; 32] = core::array::from_fn(|i| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_nanos() as u64;
+
+        let byte = ((now >> (i % 8 * 8)) & 0xFF) as u8;
+        byte ^ (i as u8)
+    });
+
+    Ed25519PrivateKey::from(seed)
 }
