@@ -159,6 +159,19 @@ impl AuraState {
         Ok(self.current_app_hash.clone())
     }
 
+    pub fn get_pending_block(&self) -> AuraResult<Block> {
+        if self.pending_block_height == 0 {
+            return Err(Error::State("No pending block".into()));
+        }
+
+        Ok(Block {
+            height: self.pending_block_height,
+            proposer_address: self.pending_block_proposer_address.clone(),
+            timestamp: self.pending_block_timestamp,
+            transactions: self.pending_transactions.clone(),
+        })
+    }
+
     pub fn add_transaction_to_local_mempool(&mut self, tx: Transaction) -> AuraResult<()> {
         info!("Adding transaction {:?} to local mempool", tx.id()?);
         self.mempool.push_back(tx);
