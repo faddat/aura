@@ -6,7 +6,6 @@ use ark_crypto_primitives::sponge::{
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::convert::TryInto;
 
 // TODO: Poseidon is wired up for commitments but circuit integration is still
@@ -110,22 +109,24 @@ impl Nullifier {
         note_randomness: &CurveFr,
         spending_key_scalar: &CurveFr,
     ) -> Result<Self, CoreError> {
-        let mut hasher = Sha256::new();
+        use crate::note::poseidon_config;
+        use ark_crypto_primitives::sponge::{
+            CryptographicSponge, FieldBasedCryptographicSponge, poseidon::PoseidonSponge,
+        };
 
-        let mut randomness_bytes = Vec::new();
-        note_randomness
-            .serialize_compressed(&mut randomness_bytes)
+        let mut sponge = PoseidonSponge::<CurveFr>::new(&poseidon_config());
+        sponge.absorb(note_randomness);
+        sponge.absorb(spending_key_scalar);
+        let hash_result = sponge.squeeze_native_field_elements(1)[0];
+        let mut bytes = Vec::new();
+        hash_result
+            .serialize_compressed(&mut bytes)
             .map_err(|e| CoreError::Serialization(e.to_string()))?;
-        hasher.update(&randomness_bytes);
-
-        let mut sk_bytes = Vec::new();
-        spending_key_scalar
-            .serialize_compressed(&mut sk_bytes)
-            .map_err(|e| CoreError::Serialization(e.to_string()))?;
-        hasher.update(&sk_bytes);
-
-        let hash_result = hasher.finalize();
-        Ok(Nullifier(hash_result.into()))
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| CoreError::Serialization("Invalid length".to_string()))?;
+        Ok(Nullifier(arr))
     }
 
     pub fn to_bytes(&self) -> [u8; 32] {
