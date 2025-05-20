@@ -411,15 +411,33 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                         }
                     }
                     AppMsg::GetHistoryMinHeight { reply } => {
-                         info!("AppLoop: GetHistoryMinHeight called");
-                        let min_h_placeholder = TestHeight::new(0);
-                        if reply.send(min_h_placeholder).is_err() {
-                             error!("AppLoop: Failed to send GetHistoryMinHeight reply");
+                        info!("AppLoop: GetHistoryMinHeight called");
+                        let state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for GetHistoryMinHeight: {}", e))?;
+                        let min_h = match state_guard.min_height() {
+                            Ok(h) => TestHeight::new(h),
+                            Err(e) => {
+                                error!(?e, "AppLoop: Failed to fetch min height");
+                                TestHeight::new(0)
+                            }
+                        };
+                        if reply.send(min_h).is_err() {
+                            error!("AppLoop: Failed to send GetHistoryMinHeight reply");
                         }
                     }
-                     AppMsg::GetDecidedValue { height, reply } => {
+                    AppMsg::GetDecidedValue { height, reply } => {
                         info!("AppLoop: GetDecidedValue called for height {}", height);
-                        if reply.send(None).is_err() {
+                        let state_guard = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for GetDecidedValue: {}", e))?;
+                        let res = match state_guard.get_block(height.as_u64()) {
+                            Ok(block) => {
+                                let placeholder_value = TestValue::new(block.height);
+                                Some(placeholder_value)
+                            },
+                            Err(e) => {
+                                warn!(?e, "AppLoop: Block not found for GetDecidedValue");
+                                None
+                            }
+                        };
+                        if reply.send(res).is_err() {
                             error!("AppLoop: Failed to send GetDecidedValue reply");
                         }
                     }

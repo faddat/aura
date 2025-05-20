@@ -159,6 +159,33 @@ impl AuraState {
         Ok(self.current_app_hash.clone())
     }
 
+    /// Return the minimum block height available in the database.
+    pub fn min_height(&self) -> AuraResult<u64> {
+        let read_txn = self.db.begin_read()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+        let mut iter = blocks_table.iter()?;
+        if let Some(entry_res) = iter.next() {
+            let (key_guard, _val_guard) = entry_res?;
+            Ok(*key_guard.value())
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Retrieve a block at the given height from the database.
+    pub fn get_block(&self, height: u64) -> AuraResult<Block> {
+        let read_txn = self.db.begin_read()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+        if let Some(data) = blocks_table.get(&height)? {
+            let block: Block = serde_json::from_slice(data.value()).map_err(|e| {
+                Error::State(format!("Failed to deserialize block: {}", e))
+            })?;
+            Ok(block)
+        } else {
+            Err(Error::State(format!("Block not found for height {}", height)))
+        }
+    }
+
     pub fn add_transaction_to_local_mempool(&mut self, tx: Transaction) -> AuraResult<()> {
         info!("Adding transaction {:?} to local mempool", tx.id()?);
         self.mempool.push_back(tx);

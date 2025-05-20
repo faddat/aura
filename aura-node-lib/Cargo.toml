@@ -57,3 +57,6 @@ sha3 = "0.10"
 [features]
 default = []
 # rpc-server = ["dep:jsonrpsee"] # Example feature for enabling RPC
+
+[dev-dependencies]
+tempfile = "3"
