@@ -124,11 +124,13 @@ async fn test_started_round() {
     let vals = reply_rx.await.unwrap();
     assert!(vals.is_empty());
 
-    let state = env.state.lock().unwrap();
-    assert_eq!(state.pending_block_height, 1);
-    assert_eq!(state.current_round, Round::ZERO);
+    // Check state in a block to ensure the MutexGuard is dropped before the await
+    {
+        let state = env.state.lock().unwrap();
+        assert_eq!(state.pending_block_height, 1);
+        assert_eq!(state.current_round, Round::ZERO);
+    } // MutexGuard is dropped here
 
-    drop(state);
     env.shutdown().await;
 }
 
