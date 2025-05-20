@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use eyre::eyre;
 use tokio::task::JoinHandle;
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, debug, error, info};
 
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::AuraState;
@@ -256,6 +256,10 @@ impl MalachiteAppNode for AuraNode {
     }
 }
 
+/// Type alias for proposal buffer data
+type ProposalBufferData = (Option<(TestHeight, Round, TestAddress)>, Vec<u64>);
+
+/// Application message loop that handles incoming consensus messages
 pub async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
     _ctx: TestContext,
@@ -264,7 +268,7 @@ pub async fn app_message_loop(
     signing_provider: Ed25519Provider,
     node_address: TestAddress,
 ) -> eyre::Result<()> {
-    let mut proposal_buffers: HashMap<String, (TestHeight, Round, TestAddress)> = HashMap::new();
+    let mut proposal_buffers: HashMap<String, ProposalBufferData> = HashMap::new();
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
@@ -302,7 +306,15 @@ pub async fn app_message_loop(
                             AppMsg::GetValue { height, round, reply, .. } => {
                                 info!(%height, %round, "AppLoop: Consensus requesting a value (block) to propose.");
 
-                                let test_value = TestValue::new(height.as_u64());
+                                // Serialize the pending block so that it can be streamed
+                                let block_bytes = {
+                                    let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed for GetValue: {}", e))?;
+                                    let block = state.get_pending_block()?;
+                                    serde_json::to_vec(&block)?
+                                };
+
+                                let mut test_value = TestValue::new(height.as_u64());
+                                test_value.extensions = Bytes::from(block_bytes.clone());
 
                                 let locally_proposed_value = LocallyProposedValue {
                                     height,
@@ -314,12 +326,8 @@ pub async fn app_message_loop(
                                     error!("AppLoop: Failed to send GetValue reply (LocallyProposedValue)");
                                 }
 
-                                // Stream a minimal set of proposal parts so that peers
-                                // can assemble the value if needed. This is a very
-                                // small placeholder implementation that should be
-                                // replaced with proper block streaming logic once the
-                                // Aura block structure is finalised.
-                                if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
+                                // Stream the full serialized block to peers
+                                if let Err(e) = stream_proposal_parts(&mut channels, &app_state_arc, height, round, &signing_provider, node_address).await {
                                     error!(?e, "AppLoop: Failed to stream proposal parts");
                                 }
                             }
@@ -336,43 +344,50 @@ pub async fn app_message_loop(
 
                                 match &part.content {
                                     StreamContent::Data(ProposalPart::Init(init)) => {
-        proposal_buffers.insert(stream_key.to_string(), (init.height, init.round, init.proposer));
+        proposal_buffers.insert(stream_key.to_string(), (Some((init.height, init.round, init.proposer)), Vec::new()));
                                         if reply.send(None).is_err() {
                                             error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
                                         }
                                     }
-                                    StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
-        if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_string()) {
-                                            // Reconstruct placeholder value identical to proposer's.
-                                            let placeholder_value = TestValue::new(height.as_u64());
-                                            let proposed = ProposedValue {
-                                                height,
-                                                round,
-                                                valid_round: Round::Nil,
-                                                proposer,
-                                                value: placeholder_value,
-                                                validity: Validity::Valid,
-                                            };
-                                            if reply.send(Some(proposed)).is_err() {
-                                                error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
-                                            }
-                                        } else {
-                                            // We don't have Init yet; just reply None.
-                                            if reply.send(None).is_err() {
-                                                error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
-                                            }
+                                    StreamContent::Data(ProposalPart::Data(data)) => {
+        proposal_buffers
+            .entry(stream_key.to_string())
+            .or_insert((None, Vec::new()))
+            .1
+            .push(data.factor);
+                                        if reply.send(None).is_err() {
+                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Data)");
                                         }
                                     }
-                                    _ => {
-                                        if reply.send(None).is_err() {
-                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Other)");
+                                    StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
+        if let Some((info_opt, factors)) = proposal_buffers.remove(&stream_key.to_string()) {
+                                            if let Some((height, round, proposer)) = info_opt {
+                                                let bytes = factors_to_bytes(&factors);
+                                                let mut value = TestValue::new(height.as_u64());
+                                                value.extensions = Bytes::from(bytes);
+                                                let proposed = ProposedValue {
+                                                    height,
+                                                    round,
+                                                    valid_round: Round::Nil,
+                                                    proposer,
+                                                    value,
+                                                    validity: Validity::Valid,
+                                                };
+                                                if reply.send(Some(proposed)).is_err() {
+                                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
+                                                }
+                                            } else if reply.send(None).is_err() {
+                                                error!("AppLoop: Failed to send ReceivedProposalPart reply (Missing Init)");
+                                            }
+                                        } else if reply.send(None).is_err() {
+                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o buffer)");
                                         }
                                     }
                                 }
                             }
                             AppMsg::RestreamProposal { height, round, .. } => {
                                 info!(%height, %round, "AppLoop: Restream proposal");
-                                if let Err(e) = stream_proposal_parts(&mut channels, height, round, &signing_provider, node_address).await {
+                                if let Err(e) = stream_proposal_parts(&mut channels, &app_state_arc, height, round, &signing_provider, node_address).await {
                                     error!(?e, "AppLoop: Failed to restream proposal parts");
                                 }
                             }
@@ -451,7 +466,6 @@ pub async fn app_message_loop(
                                    error!("AppLoop: Failed to send ProcessSyncedValue reply");
                                 }
                             }
-                            _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                         }
                     }
                     else => {
@@ -504,6 +518,7 @@ impl AuraNode {
 /// expectation of receiving proposal parts for the value produced in `GetValue`.
 async fn stream_proposal_parts(
     channels: &mut Channels<TestContext>,
+    state_arc: &Arc<Mutex<AuraState>>,
     height: TestHeight,
     round: Round,
     signing_provider: &Ed25519Provider,
@@ -517,41 +532,57 @@ async fn stream_proposal_parts(
     id_bytes.extend_from_slice(&(round.as_i64() as u64).to_be_bytes());
     let stream_id = StreamId::new(Bytes::from(id_bytes));
 
+    // Serialize the pending block
+    let block_bytes = {
+        let state = state_arc
+            .lock()
+            .map_err(|e| eyre!("Mutex lock failed for streaming: {}", e))?;
+        let block = state.get_pending_block()?;
+        serde_json::to_vec(&block)?
+    };
+
     let mut sequence: Sequence = 0;
 
     // --- Init part ---
     let init_part = ProposalPart::Init(ProposalInit::new(height, round, Round::Nil, proposer));
-    let init_msg = StreamMessage::new(
-        stream_id.clone(),
-        sequence,
-        StreamContent::Data(init_part.clone()),
-    );
+    let init_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(init_part));
     channels
         .network
         .send(NetworkMsg::PublishProposalPart(init_msg))
         .await?;
     sequence += 1;
 
-    // --- Data part(s) --- (single dummy factor 1)
-    let data_part = ProposalPart::Data(ProposalData::new(1));
-    let data_msg = StreamMessage::new(
-        stream_id.clone(),
-        sequence,
-        StreamContent::Data(data_part.clone()),
-    );
-    channels
-        .network
-        .send(NetworkMsg::PublishProposalPart(data_msg))
-        .await?;
-    sequence += 1;
-
-    // Compute hash for Fin signature following same scheme as verification
+    // --- Data parts --- first send length then bytes split in u64 chunks
     let mut hasher = Keccak256::new();
     hasher.update(height.as_u64().to_be_bytes());
     hasher.update(round.as_i64().to_be_bytes());
-    hasher.update(1u64.to_be_bytes());
-    let hash = hasher.finalize();
 
+    let len_part = ProposalPart::Data(ProposalData::new(block_bytes.len() as u64));
+    hasher.update((block_bytes.len() as u64).to_be_bytes());
+    let len_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(len_part));
+    channels
+        .network
+        .send(NetworkMsg::PublishProposalPart(len_msg))
+        .await?;
+    sequence += 1;
+
+    for chunk in block_bytes.chunks(8) {
+        let mut arr = [0u8; 8];
+        arr[..chunk.len()].copy_from_slice(chunk);
+        let num = u64::from_be_bytes(arr);
+        hasher.update(num.to_be_bytes());
+        let data_part = ProposalPart::Data(ProposalData::new(num));
+        let data_msg =
+            StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(data_part));
+        channels
+            .network
+            .send(NetworkMsg::PublishProposalPart(data_msg))
+            .await?;
+        sequence += 1;
+    }
+
+    // Compute signature
+    let hash = hasher.finalize();
     let signature = signing_provider.sign(&hash);
     let fin_part = ProposalPart::Fin(ProposalFin::new(signature));
     let fin_msg = StreamMessage::new(stream_id.clone(), sequence, StreamContent::Data(fin_part));
@@ -560,7 +591,7 @@ async fn stream_proposal_parts(
         .send(NetworkMsg::PublishProposalPart(fin_msg))
         .await?;
 
-    // Finally send explicit FIN marker
+    // Send explicit FIN marker
     let fin_marker = StreamMessage::new(stream_id, sequence + 1, StreamContent::Fin);
     channels
         .network
@@ -568,4 +599,17 @@ async fn stream_proposal_parts(
         .await?;
 
     Ok(())
+}
+
+fn factors_to_bytes(factors: &[u64]) -> Vec<u8> {
+    if factors.is_empty() {
+        return Vec::new();
+    }
+    let total_len = factors[0] as usize;
+    let mut bytes = Vec::with_capacity(total_len);
+    for num in factors.iter().skip(1) {
+        bytes.extend_from_slice(&num.to_be_bytes());
+    }
+    bytes.truncate(total_len);
+    bytes
 }
