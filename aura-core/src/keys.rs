@@ -24,8 +24,7 @@ pub struct SeedPhrase(Mnemonic);
 impl SeedPhrase {
     pub fn new_random() -> Result<Self, CoreError> {
         let mut entropy = [0u8; 16];
-        let mut rng = StdRng::from_entropy();
-        rng.fill_bytes(&mut entropy);
+        getrandom::fill(&mut entropy).map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
 
         let mnemonic = Mnemonic::from_entropy(&entropy)
             .map_err(|e| CoreError::KeyDerivation(e.to_string()))?;
@@ -56,7 +55,9 @@ pub struct PrivateKey(pub CurveFr);
 
 impl PrivateKey {
     pub fn new_random() -> Self {
-        let mut rng = StdRng::from_entropy();
+        let mut seed = <StdRng as SeedableRng>::Seed::default();
+        getrandom::fill(&mut seed).unwrap();
+        let mut rng = StdRng::from_seed(seed);
         PrivateKey(CurveFr::rand(&mut rng))
     }
 
