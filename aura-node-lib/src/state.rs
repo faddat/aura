@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::VecDeque, path::Path, sync::Arc};
 
 use crate::malachitebft_core_types::{Round, Value as MalachiteValue};
 use aura_core::Transaction;
-use redb::{Database, TableDefinition, WriteTransaction};
+use redb::{Database, ReadableTable, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
@@ -337,23 +337,30 @@ impl AuraState {
         Ok(())
     }
 
-    /// Retrieve a stored block by height if available
-    pub fn get_block(&self, height: u64) -> AuraResult<Option<Block>> {
+    /// Retrieve a stored block by height.  Returns an error if the block is not
+    /// present in the database.
+    pub fn get_block(&self, height: u64) -> AuraResult<Block> {
         let read_txn = self.db.begin_read()?;
         let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
         if let Some(entry) = blocks_table.get(&height)? {
             let block_bytes = entry.value();
             let block: Block = serde_json::from_slice(block_bytes)
                 .map_err(|e| Error::State(format!("Failed to deserialize block: {}", e)))?;
-            Ok(Some(block))
+            Ok(block)
         } else {
-            Ok(None)
+            Err(Error::State(format!("Block at height {height} not found")))
         }
     }
 
     /// Minimum height retained in the state database
-    pub fn history_min_height(&self) -> u64 {
-        if self.current_height == 0 { 0 } else { 1 }
+    pub fn min_height(&self) -> AuraResult<u64> {
+        let read_txn = self.db.begin_read()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+        if let Some((key_guard, _)) = blocks_table.first()? {
+            Ok(key_guard.value())
+        } else {
+            Ok(0)
+        }
     }
 
     fn persist_block_and_txs(
