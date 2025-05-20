@@ -1,9 +1,9 @@
 name: Multi-Node Consensus Smoke Test
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   smoke-test:
@@ -45,7 +45,7 @@ jobs:
 
       - name: Upload smoke test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: smoke-test-logs
           path: smoke.log

@@ -51,12 +51,18 @@ fn ensure_genesis_from_snapshot(path: &Path) -> Result<()> {
         return Ok(());
     }
     tracing::info!("Genesis file {:?} not found. Downloading snapshot...", path);
-    let url = format!("http://ipfs.io/ipfs/{}", "QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr");
+    let url = format!(
+        "http://ipfs.io/ipfs/{}",
+        "QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr"
+    );
     let response = attohttpc::get(&url)
         .send()
         .map_err(|e| anyhow!(format!("failed to fetch snapshot: {}", e)))?;
     if !response.is_success() {
-        return Err(anyhow!(format!("snapshot fetch returned status {}", response.status())));
+        return Err(anyhow!(format!(
+            "snapshot fetch returned status {}",
+            response.status()
+        )));
     }
     let json = response
         .text()
