@@ -52,7 +52,7 @@ sha3 = "0.10"
 [dev-dependencies]
 tempfile = "3"
 malachitebft-signing-ed25519 = { git = "https://github.com/informalsystems/malachite", rev = "696fa1c", package = "informalsystems-malachitebft-signing-ed25519", features = ["rand"] }
-rand = "0.8"
+rand = "0.9"
 
 # RPC (Example: jsonrpsee, choose one)
 # jsonrpsee = { version = "0.22", features = ["full"] , optional = true }
