@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use eyre::eyre;
 use tokio::task::JoinHandle;
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, debug, error, info};
 
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::AuraState;
@@ -44,6 +44,72 @@ use malachitebft_test::{
 };
 use malachitebft_test::{ProposalData, ProposalFin, ProposalInit, ProposalPart};
 use sha3::{Digest, Keccak256};
+
+use malachitebft_engine::util::streaming::StreamContent;
+
+#[derive(Clone)]
+struct ProposalEntry {
+    height: TestHeight,
+    round: Round,
+    proposer: TestAddress,
+    parts: Vec<StreamMessage<ProposalPart>>,
+}
+
+#[derive(Default)]
+/// Stores proposal parts for each stream so they can be re-sent on demand.
+struct ProposalBuffer {
+    /// Keyed by the raw bytes of the `StreamId` since `StreamId` itself does not
+    /// implement `Hash`.
+    entries: HashMap<Bytes, ProposalEntry>,
+}
+
+impl ProposalBuffer {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, part: StreamMessage<ProposalPart>) {
+        let id = part.stream_id.to_bytes();
+        match &part.content {
+            StreamContent::Data(ProposalPart::Init(init)) => {
+                let entry = ProposalEntry {
+                    height: init.height,
+                    round: init.round,
+                    proposer: init.proposer,
+                    parts: vec![part],
+                };
+                self.entries.insert(id, entry);
+            }
+            _ => {
+                if let Some(entry) = self.entries.get_mut(&id) {
+                    entry.parts.push(part);
+                }
+            }
+        }
+    }
+
+    async fn restream(
+        &self,
+        channels: &mut Channels<TestContext>,
+        id: &StreamId,
+    ) -> eyre::Result<()> {
+        if let Some(entry) = self.entries.get(&id.to_bytes()) {
+            for p in &entry.parts {
+                channels
+                    .network
+                    .send(NetworkMsg::PublishProposalPart(p.clone()))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    fn remove(&mut self, id: &StreamId) {
+        self.entries.remove(&id.to_bytes());
+    }
+}
 
 // --- Placeholder for Malachite's Top-Level Config ---
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -264,7 +330,7 @@ async fn app_message_loop(
     signing_provider: Ed25519Provider,
     node_address: TestAddress,
 ) -> eyre::Result<()> {
-    let mut proposal_buffers: HashMap<String, (TestHeight, Round, TestAddress)> = HashMap::new();
+    let mut proposal_buffer = ProposalBuffer::new();
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
@@ -324,43 +390,37 @@ async fn app_message_loop(
                         }
                     }
                     AppMsg::ReceivedProposalPart { from, part, reply } => {
-                        use malachitebft_engine::util::streaming::StreamContent;
                         let part_type_str = match &part.content {
                             StreamContent::Data(p) => format!("{:?}", p),
                             StreamContent::Fin => "Fin".to_string(),
                         };
                         info!(peer_id = %from, sequence = %part.sequence, part_type = %part_type_str, "AppLoop: Received proposal part.");
 
-                        // Key the buffer directly by StreamId for stability and efficiency.
-                        let stream_key = part.stream_id.clone();
+                        let stream_key = part.stream_id.to_bytes();
+                        proposal_buffer.insert(part.clone());
 
                         match &part.content {
-                            StreamContent::Data(ProposalPart::Init(init)) => {
-proposal_buffers.insert(stream_key.to_string(), (init.height, init.round, init.proposer));
+                            StreamContent::Data(ProposalPart::Init(_)) => {
                                 if reply.send(None).is_err() {
                                     error!("AppLoop: Failed to send ReceivedProposalPart reply (Init)");
                                 }
                             }
                             StreamContent::Fin | StreamContent::Data(ProposalPart::Fin(_)) => {
-if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_string()) {
-                                    // Reconstruct placeholder value identical to proposer's.
-                                    let placeholder_value = TestValue::new(height.as_u64());
+                                if let Some(entry) = proposal_buffer.entries.get(&stream_key) {
+                                    let placeholder_value = TestValue::new(entry.height.as_u64());
                                     let proposed = ProposedValue {
-                                        height,
-                                        round,
+                                        height: entry.height,
+                                        round: entry.round,
                                         valid_round: Round::Nil,
-                                        proposer,
+                                        proposer: entry.proposer,
                                         value: placeholder_value,
                                         validity: Validity::Valid,
                                     };
                                     if reply.send(Some(proposed)).is_err() {
                                         error!("AppLoop: Failed to send ReceivedProposalPart reply (Some)");
                                     }
-                                } else {
-                                    // We don't have Init yet; just reply None.
-                                    if reply.send(None).is_err() {
-                                        error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
-                                    }
+                                } else if reply.send(None).is_err() {
+                                    error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o Init)");
                                 }
                             }
                             _ => {
@@ -381,6 +441,13 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
 
                         match state_guard.commit_block() {
                             Ok(_app_hash) => {
+                                let sid = {
+                                    let mut id_bytes = Vec::with_capacity(16);
+                                    id_bytes.extend_from_slice(&certificate.height.as_u64().to_be_bytes());
+                                    id_bytes.extend_from_slice(&(certificate.round.as_i64() as u64).to_be_bytes());
+                                    StreamId::new(Bytes::from(id_bytes))
+                                };
+                                proposal_buffer.remove(&sid);
                                 let next_height = TestHeight::new(state_guard.height_value() + 1);
                                 let validator_set = initial_validator_set.clone();
                                 info!("AppLoop: Commit successful. Replying to start next height: {}", next_height);
@@ -395,6 +462,13 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                                 if reply.send(ConsensusMsg::RestartHeight(current_pending_height, validator_set)).is_err() {
                                      error!("AppLoop: Failed to send Decided reply (RestartHeight)");
                                 }
+                                let sid = {
+                                    let mut id_bytes = Vec::with_capacity(16);
+                                    id_bytes.extend_from_slice(&certificate.height.as_u64().to_be_bytes());
+                                    id_bytes.extend_from_slice(&(certificate.round.as_i64() as u64).to_be_bytes());
+                                    StreamId::new(Bytes::from(id_bytes))
+                                };
+                                proposal_buffer.remove(&sid);
                             }
                         }
                     }
@@ -403,6 +477,19 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                     }
                     AppMsg::VerifyVoteExtension { reply, .. } => {
                         if reply.send(Ok(())).is_err() { error!("AppLoop: Failed to send VerifyVoteExtension reply");}
+                    }
+                    AppMsg::RestreamProposal { height, round, valid_round, .. } => {
+                        info!(%height, %round, "AppLoop: RestreamProposal received");
+                        let sid = {
+                            let mut id_bytes = Vec::with_capacity(16);
+                            let use_round = if valid_round == Round::Nil { round } else { valid_round };
+                            id_bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                            id_bytes.extend_from_slice(&(use_round.as_i64() as u64).to_be_bytes());
+                            StreamId::new(Bytes::from(id_bytes))
+                        };
+                        if let Err(e) = proposal_buffer.restream(&mut channels, &sid).await {
+                            error!(?e, "AppLoop: Failed to restream proposal");
+                        }
                     }
                     AppMsg::GetValidatorSet { height, reply } => {
                         info!("AppLoop: GetValidatorSet called for height {}", height);
@@ -438,7 +525,6 @@ if let Some((height, round, proposer)) = proposal_buffers.remove(&stream_key.to_
                            error!("AppLoop: Failed to send ProcessSyncedValue reply");
                         }
                     }
-                    _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                 }
             }
             else => {
