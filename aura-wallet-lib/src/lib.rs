@@ -58,8 +58,8 @@ mod tests {
         let fee = 5u64;
         let amount = 40u64;
         // success case: generate dummy ZKP parameters
-        let params = ZkpParameters::generate_dummy_for_circuit()
-            .expect("ZKP parameter generation failed");
+        let params =
+            ZkpParameters::generate_dummy_for_circuit().expect("ZKP parameter generation failed");
         let (tx, change_note) = wallet
             .build_transfer(input_note.clone(), &recipient, amount, fee, &params)
             .expect("build_transfer should succeed");

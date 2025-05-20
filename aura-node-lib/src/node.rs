@@ -624,8 +624,9 @@ fn factors_to_bytes(factors: &[u64]) -> Vec<u8> {
         return Vec::new();
     }
     let total_len = factors[0] as usize;
-    let mut bytes = Vec::with_capacity(total_len);
-    for num in factors.iter().skip(1) {
+    // Build bytes from factors; avoid reserving unbounded capacity from untrusted input
+    let mut bytes = Vec::new();
+    for &num in factors.iter().skip(1) {
         bytes.extend_from_slice(&num.to_be_bytes());
     }
     bytes.truncate(total_len);
