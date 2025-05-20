@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use eyre::eyre;
 use tokio::task::JoinHandle;
-use tracing::{Instrument, debug, error, info, warn};
+use tracing::{Instrument, debug, error, info};
 
 use crate::config::AuraNodeConfig as AuraAppNodeConfig;
 use crate::state::AuraState;
@@ -470,7 +470,6 @@ pub async fn app_message_loop(
                                    error!("AppLoop: Failed to send ProcessSyncedValue reply");
                                 }
                             }
-                            _ => { warn!("AppLoop: Unhandled AppMsg variant: {}", msg_type_name(&msg));}
                         }
                     }
                     else => {
