@@ -256,6 +256,10 @@ impl MalachiteAppNode for AuraNode {
     }
 }
 
+/// Type alias for proposal buffer data
+type ProposalBufferData = (Option<(TestHeight, Round, TestAddress)>, Vec<u64>);
+
+/// Application message loop that handles incoming consensus messages
 pub async fn app_message_loop(
     app_state_arc: Arc<Mutex<AuraState>>,
     _ctx: TestContext,
@@ -264,10 +268,7 @@ pub async fn app_message_loop(
     signing_provider: Ed25519Provider,
     node_address: TestAddress,
 ) -> eyre::Result<()> {
-    let mut proposal_buffers: HashMap<
-        String,
-        (Option<(TestHeight, Round, TestAddress)>, Vec<u64>),
-    > = HashMap::new();
+    let mut proposal_buffers: HashMap<String, ProposalBufferData> = HashMap::new();
     info!("Application message loop started. Waiting for messages from consensus...");
     loop {
         tokio::select! {
@@ -380,11 +381,6 @@ pub async fn app_message_loop(
                                             }
                                         } else if reply.send(None).is_err() {
                                             error!("AppLoop: Failed to send ReceivedProposalPart reply (Fin w/o buffer)");
-                                        }
-                                    }
-                                    _ => {
-                                        if reply.send(None).is_err() {
-                                            error!("AppLoop: Failed to send ReceivedProposalPart reply (Other)");
                                         }
                                     }
                                 }
