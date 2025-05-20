@@ -14,6 +14,7 @@ pub use malachitebft_test;
 
 pub mod config; // Make config module public
 pub mod node; // Make node module public to access AuraNode
+pub mod rpc;
 mod state;
 
 // application module temporarily disabled until ABCI shim updated
@@ -22,6 +23,7 @@ mod state;
 
 pub use config::AuraNodeConfig;
 pub use node::AuraNode; // Export AuraNode
+pub use rpc::spawn_rpc_server;
 pub use state::{AuraState, Block, ValidatorUpdate}; // Export ValidatorUpdate as well
 
 /// Represents the state of the Aura node (potentially for higher-level management, currently unused)
