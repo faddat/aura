@@ -50,6 +50,7 @@ bytes = "1"
 sha3 = "0.10"
 getrandom = "0.3.3"
 rand_core = "0.9.3"
+ark-serialize = { version = "0.5.0", default-features = false, features = ["derive", "std"] }
 
 [dev-dependencies]
 tempfile = "3"
