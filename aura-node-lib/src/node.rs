@@ -423,7 +423,7 @@ pub async fn app_message_loop(
                             AppMsg::GetHistoryMinHeight { reply } => {
                                 info!("AppLoop: GetHistoryMinHeight called");
                                 let state = app_state_arc.lock().map_err(|e| eyre!("Mutex lock failed: {}", e))?;
-                                let min_h = TestHeight::new(state.history_min_height());
+                                let min_h = TestHeight::new(state.min_height()?);
                                 if reply.send(min_h).is_err() {
                                     error!("AppLoop: Failed to send GetHistoryMinHeight reply");
                                 }
@@ -445,7 +445,7 @@ pub async fn app_message_loop(
                                     valid_round: Round::Nil,
                                     proposer,
                                     value: TestValue::new(height.as_u64()),
-                                    validity: if state.get_block(height.as_u64())?.is_some() { Validity::Valid } else { Validity::Invalid },
+                                    validity: if state.get_block(height.as_u64()).is_ok() { Validity::Valid } else { Validity::Invalid },
                                 };
                                 if reply.send(proposed).is_err() {
                                    error!("AppLoop: Failed to send ProcessSyncedValue reply");
