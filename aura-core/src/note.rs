@@ -1,25 +1,44 @@
 use crate::{AuraAddress, CoreError, CurveFr};
-use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+use ark_crypto_primitives::sponge::{
+    CryptographicSponge, FieldBasedCryptographicSponge,
+    poseidon::{PoseidonConfig, PoseidonSponge},
+};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::convert::TryInto;
 
-// TODO: IMPLEMENTATION WARNING
-// This codebase uses the sha2 hash function for commitments instead of the Poseidon hash
-// which would be more ZKP-friendly. To use Poseidon properly, you need to:
-// 1. Initialize matrices properly for PoseidonConfig
-// 2. Implement hashing in zkp.rs using PoseidonSponge
-// 3. Add proper implementations of PoseidonSpongeVar for circuit constraints
-//
-// The current implementation is a placeholder for development. In a production
-// environment, you should implement proper ZK-friendly primitives.
+// TODO: Poseidon is wired up for commitments but circuit integration is still
+// a mock. When a real circuit is implemented, ensure `poseidon_config()` is used
+// consistently both inside and outside the circuit.
 
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Note {
     pub value: u64,
     pub owner_pk_info: Vec<u8>,
     pub randomness: CurveFr,
+}
+
+/// Return Poseidon parameters used for note commitments.
+pub fn poseidon_config() -> PoseidonConfig<CurveFr> {
+    use ark_crypto_primitives::sponge::poseidon::traits::find_poseidon_ark_and_mds;
+
+    const FULL_ROUNDS: usize = 8;
+    const PARTIAL_ROUNDS: usize = 31;
+    const ALPHA: u64 = 17;
+    const RATE: usize = 3;
+    const CAPACITY: usize = 1;
+
+    let (ark, mds) = find_poseidon_ark_and_mds::<CurveFr>(
+        CurveFr::MODULUS_BIT_SIZE as u64,
+        RATE,
+        FULL_ROUNDS as u64,
+        PARTIAL_ROUNDS as u64,
+        0,
+    );
+
+    PoseidonConfig::new(FULL_ROUNDS, PARTIAL_ROUNDS, ALPHA, mds, ark, RATE, CAPACITY)
 }
 
 impl Note {
@@ -32,18 +51,23 @@ impl Note {
     }
 
     pub fn commitment_outside_circuit(&self) -> Result<NoteCommitment, CoreError> {
-        let mut hasher = Sha256::new();
-        hasher.update(self.value.to_le_bytes());
-        hasher.update(&self.owner_pk_info);
+        let mut sponge = PoseidonSponge::<CurveFr>::new(&poseidon_config());
 
-        let mut randomness_bytes = Vec::new();
-        self.randomness
-            .serialize_compressed(&mut randomness_bytes)
+        let owner_fr = CurveFr::from_le_bytes_mod_order(&self.owner_pk_info);
+        sponge.absorb(&CurveFr::from(self.value));
+        sponge.absorb(&owner_fr);
+        sponge.absorb(&self.randomness);
+
+        let hash_result = sponge.squeeze_native_field_elements(1)[0];
+        let mut bytes = Vec::new();
+        hash_result
+            .serialize_compressed(&mut bytes)
             .map_err(|e| CoreError::Serialization(e.to_string()))?;
-        hasher.update(&randomness_bytes);
-
-        let hash_result = hasher.finalize();
-        Ok(NoteCommitment(hash_result.into()))
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| CoreError::Serialization("Invalid length".to_string()))?;
+        Ok(NoteCommitment(arr))
     }
 }
 
@@ -106,5 +130,32 @@ impl Nullifier {
 
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AURA_ADDR_HRP;
+
+    #[test]
+    fn commitment_is_stable() {
+        let addr = AuraAddress::new(AURA_ADDR_HRP, vec![1u8; 48]).unwrap();
+        let randomness = CurveFr::from(42u64);
+        let note = Note::new(100, &addr, randomness);
+
+        let c1 = note.commitment_outside_circuit().unwrap();
+        let c2 = note.commitment_outside_circuit().unwrap();
+        assert_eq!(c1, c2);
+
+        let mut sponge = PoseidonSponge::<CurveFr>::new(&poseidon_config());
+        sponge.absorb(&CurveFr::from(100u64));
+        sponge.absorb(&CurveFr::from_le_bytes_mod_order(addr.payload()));
+        sponge.absorb(&randomness);
+        let expected = sponge.squeeze_native_field_elements(1)[0];
+        let mut bytes = Vec::new();
+        expected.serialize_compressed(&mut bytes).unwrap();
+        let arr: [u8; 32] = bytes.as_slice().try_into().unwrap();
+        assert_eq!(c1.to_bytes(), arr);
     }
 }
