@@ -136,6 +136,19 @@ async fn test_started_round() {
 async fn test_get_value() {
     let mut env = setup().await;
 
+    // First create a pending block by calling StartedRound
+    let (start_tx, start_rx) = oneshot::channel();
+    env.cons_tx
+        .send(AppMsg::StartedRound {
+            height: TestHeight::new(1),
+            round: Round::ZERO,
+            proposer: env.addr,
+            reply_value: start_tx,
+        })
+        .await
+        .unwrap();
+    start_rx.await.unwrap();
+
     let (reply_tx, reply_rx) = oneshot::channel();
     env.cons_tx
         .send(AppMsg::GetValue {
@@ -149,7 +162,7 @@ async fn test_get_value() {
     let proposed = reply_rx.await.unwrap();
     assert_eq!(proposed.height, TestHeight::new(1));
     assert_eq!(proposed.round, Round::ZERO);
-    assert_eq!(proposed.value, TestValue::new(1));
+    assert_eq!(proposed.value.value, TestValue::new(1).value);
 
     for _ in 0..4 {
         env.net_rx.recv().await.unwrap();
@@ -201,6 +214,19 @@ async fn test_verify_vote_extension() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_restream_proposal() {
     let mut env = setup().await;
+
+    // First create a pending block by calling StartedRound
+    let (r_tx, r_rx) = oneshot::channel();
+    env.cons_tx
+        .send(AppMsg::StartedRound {
+            height: TestHeight::new(1),
+            round: Round::ZERO,
+            proposer: env.addr,
+            reply_value: r_tx,
+        })
+        .await
+        .unwrap();
+    r_rx.await.unwrap();
 
     env.cons_tx
         .send(AppMsg::RestreamProposal {
