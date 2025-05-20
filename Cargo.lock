@@ -541,7 +541,6 @@ dependencies = [
  "aura-core",
  "aura-node-lib",
  "aura-wallet-lib",
- "bech32",
  "clap",
  "config 0.15.11",
  "futures",
