@@ -324,6 +324,25 @@ impl AuraState {
         Ok(())
     }
 
+    /// Retrieve a stored block by height if available
+    pub fn get_block(&self, height: u64) -> AuraResult<Option<Block>> {
+        let read_txn = self.db.begin_read()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+        if let Some(entry) = blocks_table.get(&height)? {
+            let block_bytes = entry.value();
+            let block: Block = serde_json::from_slice(block_bytes)
+                .map_err(|e| Error::State(format!("Failed to deserialize block: {}", e)))?;
+            Ok(Some(block))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Minimum height retained in the state database
+    pub fn history_min_height(&self) -> u64 {
+        if self.current_height == 0 { 0 } else { 1 }
+    }
+
     fn persist_block_and_txs(
         write_txn: &WriteTransaction,
         block_to_store: &Block,
