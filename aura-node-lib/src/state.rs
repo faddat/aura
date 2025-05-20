@@ -8,6 +8,13 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
 
 use crate::{Error, Result as AuraResult};
+use ark_serialize::CanonicalDeserialize;
+use aura_core::{CurveFr, ZkpHandler, ZkpParameters};
+use once_cell::sync::Lazy;
+
+// ZKP parameters (demo): generate once with dummy circuit
+static ZKP_PARAMS: Lazy<ZkpParameters> =
+    Lazy::new(|| ZkpParameters::generate_dummy_for_circuit().unwrap());
 
 // Derive Ord and PartialOrd for Block and ValidatorUpdate
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,10 +240,44 @@ impl AuraState {
             ));
         }
 
-        debug!(
-            "DeliverTx: Mock ZKP verification passed for tx {:?}",
-            hex::encode(tx_id)
+        // Real ZKP verification: reconstruct public inputs and verify proof
+        // Deserialize anchor into field element
+        let anchor_fr = CurveFr::deserialize_uncompressed(&mut &tx.anchor[..])
+            .map_err(|e| Error::State(format!("Failed to parse anchor: {}", e)))?;
+        let fee_val = tx.fee.0;
+        // Expect exactly one nullifier and two commitments
+        if tx.spent_nullifiers.len() != 1 || tx.new_note_commitments.len() != 2 {
+            return Err(Error::State(
+                "Invalid transaction format: wrong number of nullifiers or commitments".to_string(),
+            ));
+        }
+        // Deserialize nullifier and commitments to field elements
+        let nullifier_fr =
+            CurveFr::deserialize_uncompressed(&mut &tx.spent_nullifiers[0].to_bytes()[..])
+                .map_err(|e| Error::State(format!("Failed to parse nullifier: {}", e)))?;
+        let out_commit_fr =
+            CurveFr::deserialize_uncompressed(&mut &tx.new_note_commitments[0].to_bytes()[..])
+                .map_err(|e| Error::State(format!("Failed to parse output commitment: {}", e)))?;
+        let change_commit_fr =
+            CurveFr::deserialize_uncompressed(&mut &tx.new_note_commitments[1].to_bytes()[..])
+                .map_err(|e| Error::State(format!("Failed to parse change commitment: {}", e)))?;
+        let public_inputs = ZkpHandler::prepare_public_inputs_for_verification(
+            anchor_fr,
+            fee_val,
+            nullifier_fr,
+            out_commit_fr,
+            change_commit_fr,
         );
+        let proof_ok = ZkpHandler::verify_proof(
+            &ZKP_PARAMS.prepared_verifying_key,
+            &public_inputs,
+            &tx.zk_proof_data,
+        )
+        .map_err(|e| Error::State(format!("ZKP verify error: {}", e)))?;
+        if !proof_ok {
+            return Err(Error::State("ZKP verification failed".to_string()));
+        }
+        debug!("DeliverTx: ZKP verified for tx {:?}", hex::encode(tx_id));
         for nullifier in &tx.spent_nullifiers {
             debug!(
                 "DeliverTx: Checking nullifier {:?} (mock)",

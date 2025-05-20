@@ -594,6 +594,7 @@ name = "aura-node-lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ark-serialize",
  "async-trait",
  "aura-core",
  "bytes",
