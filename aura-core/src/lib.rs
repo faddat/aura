@@ -15,6 +15,7 @@ pub use error::CoreError;
 pub use keys::{PrivateKey, PublicKey, SeedPhrase, Signature}; // Example key types
 pub use note::{Note, NoteCommitment, Nullifier, poseidon_config};
 pub use transaction::{Fee, Memo, Transaction, ZkProofData};
+pub use zkp::{TransferCircuit, ZkpHandler, ZkpParameters};
 
 // Define a global curve type for consistency (e.g., BLS12-381)
 pub type AuraCurve = ark_bls12_381::Bls12_381;
