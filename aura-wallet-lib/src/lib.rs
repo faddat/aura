@@ -6,8 +6,8 @@ use ark_ff::UniformRand;
 use ark_std::rand::{SeedableRng, rngs::StdRng};
 use aura_core::keys::{generate_keypair_from_seed_phrase_str, generate_new_keypair_and_seed};
 use aura_core::{
-    CurveFr, Fee, Memo, Note, Nullifier, PrivateKey, PublicKey, SeedPhrase,
-    Transaction, ZkProofData,
+    CurveFr, Fee, Memo, Note, Nullifier, PrivateKey, PublicKey, SeedPhrase, Transaction,
+    ZkProofData,
 };
 
 /// Represents an in-memory wallet keypair with optional seed phrase.

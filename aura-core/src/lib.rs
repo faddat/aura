@@ -13,7 +13,7 @@ pub mod zkp; // This will define traits/structs for ZKP interaction
 pub use address::AuraAddress;
 pub use error::CoreError;
 pub use keys::{PrivateKey, PublicKey, SeedPhrase, Signature}; // Example key types
-pub use note::{Note, NoteCommitment, Nullifier};
+pub use note::{Note, NoteCommitment, Nullifier, poseidon_config};
 pub use transaction::{Fee, Memo, Transaction, ZkProofData};
 
 // Define a global curve type for consistency (e.g., BLS12-381)
