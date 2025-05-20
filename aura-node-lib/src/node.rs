@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::rpc::spawn_rpc_server;
 use async_trait::async_trait;
 use eyre::eyre;
 use tokio::task::JoinHandle;
@@ -93,6 +94,7 @@ pub struct AuraNodeRunningHandle {
     pub app_logic_handle: JoinHandle<()>,
     pub engine_handle: EngineHandle,
     pub tx_event: TxEvent<TestContext>,
+    pub rpc_handle: Option<JoinHandle<()>>,
 }
 
 #[async_trait]
@@ -103,6 +105,9 @@ impl MalachiteAppNodeHandle<TestContext> for AuraNodeRunningHandle {
     async fn kill(&self, _reason: Option<String>) -> eyre::Result<()> {
         self.engine_handle.actor.kill_and_wait(None).await?;
         self.app_logic_handle.abort();
+        if let Some(handle) = &self.rpc_handle {
+            handle.abort();
+        }
         self.engine_handle.handle.abort();
         Ok(())
     }
@@ -200,6 +205,7 @@ impl MalachiteAppNode for AuraNode {
         let app_state = AuraState::new(app_state_db_path, self._app_level_private_key.clone())
             .map_err(|e| eyre!("Failed to create AuraState: {}", e))?;
         let app_state_arc = Arc::new(Mutex::new(app_state));
+        let app_state_arc_rpc = app_state_arc.clone();
 
         info!("Calling malachitebft_app_channel::start_engine...");
         let (channels, engine_handle) = malachite_start_engine(
@@ -243,15 +249,26 @@ impl MalachiteAppNode for AuraNode {
         });
         info!("Spawned application message loop task.");
 
+        let rpc_handle = self.aura_app_config.rpc.as_ref().map(|rpc_cfg| spawn_rpc_server(
+                app_state_arc_rpc,
+                rpc_cfg.listen_addr.clone(),
+            ));
+
         Ok(AuraNodeRunningHandle {
             app_logic_handle,
             engine_handle,
             tx_event: tx_event_channel,
+            rpc_handle,
         })
     }
 
     async fn run(self) -> eyre::Result<()> {
         let handles = self.start().await?;
+        if let Some(rpc) = handles.rpc_handle {
+            tokio::spawn(async move {
+                let _ = rpc.await;
+            });
+        }
         handles.app_logic_handle.await.map_err(Into::into)
     }
 }
