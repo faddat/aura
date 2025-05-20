@@ -3,12 +3,12 @@
 //! This library provides wallet functionality for the Aura blockchain.
 
 use ark_ff::UniformRand;
+use ark_std::rand::{SeedableRng, rngs::StdRng};
+use aura_core::keys::{generate_keypair_from_seed_phrase_str, generate_new_keypair_and_seed};
 use aura_core::{
-    CurveFr, Fee, Memo, Note, NoteCommitment, Nullifier, PrivateKey, PublicKey, SeedPhrase,
-    Transaction, ZkProofData, generate_keypair_from_seed_phrase_str, generate_new_keypair_and_seed,
+    CurveFr, Fee, Memo, Note, Nullifier, PrivateKey, PublicKey, SeedPhrase,
+    Transaction, ZkProofData,
 };
-use rand::SeedableRng;
-use rand::rngs::StdRng;
 
 /// Represents an in-memory wallet keypair with optional seed phrase.
 #[derive(Clone)]
