@@ -37,6 +37,7 @@ pub struct ExecTxResult {
 #[derive(Debug)]
 pub struct AuraState {
     db: Database,
+    db_path: std::path::PathBuf,
     pub current_height: u64,
     current_app_hash: Vec<u8>,
     pub pending_block_height: u64,
@@ -86,7 +87,8 @@ impl AuraState {
         db_path: impl AsRef<Path>,
         node_private_key: Arc<aura_core::PrivateKey>,
     ) -> AuraResult<Self> {
-        let db = Database::create(db_path)?;
+        let db_path_buf = db_path.as_ref().to_path_buf();
+        let db = Database::create(&db_path_buf)?;
         // create tables if they are missing (first run)
         Self::init_db(&db)?;
         let (current_height, current_app_hash) = Self::load_initial_state(&db)?;
@@ -97,6 +99,7 @@ impl AuraState {
         );
         Ok(Self {
             db,
+            db_path: db_path_buf,
             current_height,
             current_app_hash,
             pending_block_height: 0,
@@ -394,16 +397,22 @@ impl AuraState {
     }
 }
 
-// We need a clone implementation that clones the fields that can be cloned
-// and creates a new instance of the database
 impl Clone for AuraState {
     fn clone(&self) -> Self {
-        // This is a placeholder implementation - in practice you'd need to
-        // properly handle cloning the database which may involve creating a new one
-        // or using a connection pool.
-        // For now, we'll panic with a clear message
-        panic!(
-            "Cloning AuraState is not fully supported due to the embedded database. This indicates an unexpected usage pattern."
-        )
+        let db =
+            Database::open(&self.db_path).expect("Failed to open database when cloning AuraState");
+        Self {
+            db,
+            db_path: self.db_path.clone(),
+            current_height: self.current_height,
+            current_app_hash: self.current_app_hash.clone(),
+            pending_block_height: self.pending_block_height,
+            pending_block_proposer_address: self.pending_block_proposer_address.clone(),
+            pending_block_timestamp: self.pending_block_timestamp,
+            pending_transactions: self.pending_transactions.clone(),
+            node_private_key: Arc::clone(&self.node_private_key),
+            current_round: self.current_round,
+            mempool: self.mempool.clone(),
+        }
     }
 }
