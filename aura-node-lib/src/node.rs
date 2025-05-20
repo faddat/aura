@@ -249,10 +249,11 @@ impl MalachiteAppNode for AuraNode {
         });
         info!("Spawned application message loop task.");
 
-        let rpc_handle = self.aura_app_config.rpc.as_ref().map(|rpc_cfg| spawn_rpc_server(
-                app_state_arc_rpc,
-                rpc_cfg.listen_addr.clone(),
-            ));
+        let rpc_handle = self
+            .aura_app_config
+            .rpc
+            .as_ref()
+            .map(|rpc_cfg| spawn_rpc_server(app_state_arc_rpc, rpc_cfg.listen_addr.clone()));
 
         Ok(AuraNodeRunningHandle {
             app_logic_handle,

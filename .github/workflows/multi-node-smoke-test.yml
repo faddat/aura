@@ -1,0 +1,51 @@
+name: Multi-Node Consensus Smoke Test
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  smoke-test:
+    name: Smoke-test multi-node consensus
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy, clippy-preview
+          override: true
+
+      - name: Build binaries
+        run: |
+          cargo build --release --workspace
+
+      - name: Run multi-node testnet (4 nodes)
+        run: |
+          set -eux
+          rm -rf ./.testnet-multi
+          # Start the multi-node testnet in background and capture logs
+          cargo run --release --bin aura -- multi-node-testnet --nodes 4 > smoke.log 2>&1 &
+          TESTNET_PID=$!
+          # Give nodes time to start and reach a consensus block
+          sleep 20
+          # Assert that at least one block was committed
+          if ! grep -q "State: Successfully committed block" smoke.log; then
+            echo "No committed blocks found in logs:" >&2
+            tail -n 50 smoke.log >&2 || true
+            kill $TESTNET_PID || true
+            exit 1
+          fi
+          # Teardown testnet processes
+          kill $TESTNET_PID || true
+
+      - name: Upload smoke test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: smoke-test-logs
+          path: smoke.log

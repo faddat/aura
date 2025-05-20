@@ -1,0 +1,19 @@
+# Clippy configuration for the Aura workspace
+#
+# Customize Clippy lints with threshold limits and test allowances.
+
+# Minimum supported Rust version for Clippy
+msrv = "1.87.0"
+
+# Thresholds for complexity-related lints
+too-many-arguments-threshold = 7
+type-complexity-threshold = 200
+cognitive-complexity-threshold = 30
+too-many-lines-threshold = 1000
+
+# Allow certain patterns within test code
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+allow-indexing-slicing-in-tests = true

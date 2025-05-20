@@ -1,0 +1,6 @@
+ # Rustfmt configuration for the Aura workspace
+ # Run `cargo fmt --all --` to apply these rules.
+
+edition = "2024"
+ max_width = 100
+reorder_imports = true
