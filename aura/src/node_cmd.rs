@@ -2,6 +2,8 @@ use crate::config::AuraAppConfig;
 use anyhow::{Context, Result, anyhow};
 use aura_node_lib::malachitebft_app::node::Node as MalachiteAppNodeTrait;
 use clap::Subcommand;
+use futures::TryStreamExt;
+use ipfs_api::{IpfsApi, IpfsClient};
 use std::path::Path;
 use std::sync::Arc; // Required for Arc::new
 
@@ -46,27 +48,36 @@ fn convert_address(addr: &str) -> Result<String> {
     Ok(encoded)
 }
 
-fn ensure_genesis_from_snapshot(path: &Path) -> Result<()> {
+async fn ensure_genesis_from_snapshot(path: &Path) -> Result<()> {
     if path.exists() {
         return Ok(());
     }
     tracing::info!("Genesis file {:?} not found. Downloading snapshot...", path);
-    let url = format!(
-        "http://ipfs.io/ipfs/{}",
-        "QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr"
-    );
-    let response = attohttpc::get(&url)
-        .send()
-        .map_err(|e| anyhow!(format!("failed to fetch snapshot: {}", e)))?;
-    if !response.is_success() {
-        return Err(anyhow!(format!(
-            "snapshot fetch returned status {}",
-            response.status()
-        )));
-    }
-    let json = response
-        .text()
-        .map_err(|e| anyhow!(format!("failed to read snapshot: {}", e)))?;
+    // Fetch genesis JSON from IPFS
+    const CID: &str = "QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr";
+    tracing::info!("Fetching genesis from IPFS CID {}", CID);
+    // Fetch genesis JSON from IPFS in a blocking context to keep this future Send
+    let json = tokio::task::spawn_blocking(move || -> Result<String> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow!("Failed to build runtime: {}", e))?;
+        rt.block_on(async move {
+            let client = IpfsClient::default();
+            let mut body: Vec<u8> = Vec::new();
+            let mut stream = client.cat(CID);
+            while let Some(chunk) = stream
+                .try_next()
+                .await
+                .map_err(|e| anyhow!("IPFS fetch error: {}", e))?
+            {
+                body.extend_from_slice(&chunk);
+            }
+            String::from_utf8(body).map_err(|e| anyhow!("Invalid UTF-8 from IPFS: {}", e))
+        })
+    })
+    .await
+    .map_err(|e| anyhow!("Blocking IPFS fetch failed: {}", e))??;
     let mut accounts: Vec<SnapshotAccount> = serde_json::from_str(&json)?;
     for acc in &mut accounts {
         acc.address = convert_address(&acc.address)?;
@@ -100,7 +111,7 @@ pub async fn handle_node_command(
                 let path = shellexpand::tilde(&app_config.node.genesis_file_path).into_owned();
                 std::path::PathBuf::from(path)
             };
-            ensure_genesis_from_snapshot(&genesis_path)?;
+            ensure_genesis_from_snapshot(&genesis_path).await?;
 
             // Construct aura_node_lib::config::AuraNodeConfig from aura::config::NodeConfig
             let node_lib_config = aura_node_lib::AuraNodeConfig {
