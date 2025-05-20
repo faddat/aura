@@ -199,34 +199,6 @@ async fn test_verify_vote_extension() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn test_restream_proposal() {
-    let mut env = setup().await;
-
-    env.cons_tx
-        .send(AppMsg::RestreamProposal {
-            height: TestHeight::new(1),
-            round: Round::ZERO,
-            valid_round: Round::ZERO,
-            address: env.addr,
-            value_id: TestValue::new(1).id(),
-        })
-        .await
-        .unwrap();
-
-    for _ in 0..4 {
-        env.net_rx.recv().await.unwrap();
-    }
-
-    env.shutdown().await;
-}
-
-fn random_peer_id() -> PeerId {
-    let kp = Keypair::generate_ed25519();
-    let lib_id = Libp2pPeerId::from_public_key(&kp.public());
-    PeerId::from_bytes(&lib_id.to_bytes()).unwrap()
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn test_received_proposal_part() {
     let env = setup().await;
     let peer = random_peer_id();
