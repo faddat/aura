@@ -8,5 +8,6 @@ aura-core = { path = "../aura-core" }
 rand = "0.9"
 ark-ff = "0.5"
 ark-std = "0.5.0"
+getrandom = "0.3.3"
 ark-crypto-primitives = "0.5.0"
 ark-serialize = "0.5.0"

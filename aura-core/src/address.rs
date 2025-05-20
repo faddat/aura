@@ -22,8 +22,8 @@ impl AuraAddress {
                 payload.len()
             )));
         }
-        Hrp::parse_unchecked(hrp_str); // Will panic on invalid HRP chars for parse_unchecked. Use Hrp::parse for Result.
-        // Hrp::parse(hrp_str).map_err(CoreError::from)?;
+        // Validate HRP string; Hrp::parse returns an error on invalid characters
+        Hrp::parse(hrp_str).map_err(CoreError::from)?;
         Ok(AuraAddress {
             hrp_str: hrp_str.to_string(),
             payload,
@@ -45,11 +45,11 @@ impl AuraAddress {
 
 impl fmt::Display for AuraAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hrp = Hrp::parse_unchecked(&self.hrp_str); // Assumes valid by construction in Self::new
-        match bech32::encode::<Bech32m>(hrp, &self.payload) {
-            Ok(encoded) => write!(f, "{}", encoded),
-            Err(_e) => Err(fmt::Error),
-        }
+        // Parse HRP; if invalid, error in formatting
+        let hrp = Hrp::parse(&self.hrp_str).map_err(|_| fmt::Error)?;
+        bech32::encode::<Bech32m>(hrp, &self.payload)
+            .map_err(|_| fmt::Error)
+            .and_then(|encoded| write!(f, "{}", encoded))
     }
 }
 

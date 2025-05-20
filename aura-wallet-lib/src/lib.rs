@@ -6,8 +6,8 @@ use ark_crypto_primitives::sponge::{
     CryptographicSponge, FieldBasedCryptographicSponge, poseidon::PoseidonSponge,
 };
 use ark_ff::{PrimeField, UniformRand};
-use ark_std::rand::{rngs::StdRng, SeedableRng};
 use ark_serialize::CanonicalSerialize;
+use ark_std::rand::{SeedableRng, rngs::StdRng};
 use aura_core::keys::{generate_keypair_from_seed_phrase_str, generate_new_keypair_and_seed};
 use aura_core::{
     CurveFr, Fee, Memo, Note, Nullifier, PrivateKey, PublicKey, SeedPhrase, Transaction,
@@ -21,6 +21,66 @@ pub struct Wallet {
     pub private_key: PrivateKey,
     pub public_key: PublicKey,
     pub address: aura_core::AuraAddress,
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use aura_core::{CoreError, ZkpParameters};
+
+    #[test]
+    fn new_random_and_from_seed_phrase_produce_same_keys() {
+        let wallet1 = Wallet::new_random().expect("new_random failed");
+        let phrase = wallet1.seed_phrase.as_ref().unwrap().as_str();
+        let wallet2 = Wallet::from_seed_phrase(&phrase).expect("from_seed_phrase failed");
+        assert_eq!(wallet1.private_key, wallet2.private_key);
+        assert_eq!(wallet1.public_key, wallet2.public_key);
+        assert_eq!(wallet1.address, wallet2.address);
+    }
+
+    #[test]
+    fn new_note_sets_value_and_owner() {
+        let wallet = Wallet::new_random().expect("new_random failed");
+        let value = 100u64;
+        let note = wallet.new_note(value);
+        assert_eq!(note.value, value);
+        assert_eq!(note.owner_pk_info, wallet.address.payload().to_vec());
+    }
+
+    #[test]
+    fn build_transfer_success_and_failure() {
+        let wallet = Wallet::new_random().expect("new_random failed");
+        let recipient = wallet.address.clone();
+        let value = 50u64;
+        let randomness = CurveFr::from(7u64);
+        let input_note = Note::new(value, &wallet.address, randomness);
+        let fee = 5u64;
+        let amount = 40u64;
+        // success case: generate dummy ZKP parameters
+        let params =
+            ZkpParameters::generate_dummy_for_circuit().expect("ZKP parameter generation failed");
+        let (tx, change_note) = wallet
+            .build_transfer(input_note.clone(), &recipient, amount, fee, &params)
+            .expect("build_transfer should succeed");
+        assert_eq!(tx.fee.0, fee);
+        assert_eq!(tx.spent_nullifiers.len(), 1);
+        let expected_nullifier = Nullifier::new_outside_circuit(&randomness, &wallet.private_key.0)
+            .expect("nullifier creation failed");
+        assert_eq!(tx.spent_nullifiers[0], expected_nullifier);
+        assert_eq!(tx.new_note_commitments.len(), 2);
+        let expected_change_commit = change_note
+            .commitment_outside_circuit()
+            .expect("change_commitment failed");
+        assert_eq!(tx.new_note_commitments[1], expected_change_commit);
+        assert_eq!(change_note.value, value - amount - fee);
+
+        // failure case: insufficient funds
+        let err = wallet
+            .build_transfer(input_note, &recipient, value - fee + 1, fee, &params)
+            .unwrap_err();
+        assert!(matches!(err, CoreError::InsufficientFunds));
+    }
 }
 
 impl Wallet {
@@ -48,7 +108,9 @@ impl Wallet {
 
     /// Create a new note owned by this wallet with random blinding.
     pub fn new_note(&self, value: u64) -> Note {
-        let mut rng = StdRng::from_entropy();
+        let mut seed = <StdRng as SeedableRng>::Seed::default();
+        getrandom::fill(&mut seed).expect("Failed to generate RNG seed");
+        let mut rng = StdRng::from_seed(seed);
         let randomness = CurveFr::rand(&mut rng);
         Note::new(value, &self.address, randomness)
     }
@@ -71,7 +133,9 @@ impl Wallet {
 
         let change_value = input_note.value - amount - fee;
 
-        let mut rng = StdRng::from_entropy();
+        let mut seed = <StdRng as SeedableRng>::Seed::default();
+        getrandom::fill(&mut seed).expect("Failed to generate RNG seed");
+        let mut rng = StdRng::from_seed(seed);
         let out_randomness = CurveFr::rand(&mut rng);
         let change_randomness = CurveFr::rand(&mut rng);
         let anchor = CurveFr::rand(&mut rng);
