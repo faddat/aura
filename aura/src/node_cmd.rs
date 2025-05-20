@@ -1,9 +1,13 @@
 use crate::config::AuraAppConfig;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use aura_node_lib::malachitebft_app::node::Node as MalachiteAppNodeTrait;
 use clap::Subcommand;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc; // Required for Arc::new
+
+use bech32::{self, Bech32m, primitives::hrp::Hrp};
+use serde::{Deserialize, Serialize};
 
 #[derive(Subcommand, Debug)]
 pub enum NodeCommands {
@@ -15,6 +19,65 @@ pub enum NodeCommands {
     },
     /// Show node status (to be implemented)
     Status,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnapshotCoin {
+    amount: String,
+    denom: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SnapshotAccount {
+    address: String,
+    coins: Vec<SnapshotCoin>,
+    #[serde(default)]
+    is_validator: bool,
+}
+
+fn convert_address(addr: &str) -> Result<String> {
+    let (hrp, data) =
+        bech32::decode(addr).map_err(|e| anyhow!(format!("bech32 decode error: {}", e)))?;
+    if hrp.as_str() != "unicorn" {
+        return Err(anyhow!(format!("unexpected hrp: {}", hrp.as_str())));
+    }
+    let new_hrp = Hrp::parse_unchecked("whiteaura");
+    let encoded = bech32::encode::<Bech32m>(new_hrp, &data)
+        .map_err(|e| anyhow!(format!("bech32 encode error: {}", e)))?;
+    Ok(encoded)
+}
+
+fn ensure_genesis_from_snapshot(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    tracing::info!("Genesis file {:?} not found. Downloading snapshot...", path);
+    let output = Command::new("ipfs")
+        .arg("cat")
+        .arg("QmNLocWsww2QgXGawfMPj8tn9ggzEt4dbiywAKiFjgGQhr")
+        .output()
+        .context("failed to execute ipfs")?;
+    if !output.status.success() {
+        return Err(anyhow!(format!(
+            "ipfs cat failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let json = String::from_utf8(output.stdout).context("invalid UTF-8 from ipfs")?;
+    let mut accounts: Vec<SnapshotAccount> = serde_json::from_str(&json)?;
+    for acc in &mut accounts {
+        acc.address = convert_address(&acc.address)?;
+        for coin in &mut acc.coins {
+            if coin.denom == "uwunicorn" {
+                coin.denom = "uaura".to_string();
+            }
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&accounts)?)?;
+    Ok(())
 }
 
 pub async fn handle_node_command(
@@ -29,6 +92,12 @@ pub async fn handle_node_command(
                 "Node configuration from app_config.node: {:?}",
                 app_config.node
             );
+
+            let genesis_path = {
+                let path = shellexpand::tilde(&app_config.node.genesis_file_path).into_owned();
+                std::path::PathBuf::from(path)
+            };
+            ensure_genesis_from_snapshot(&genesis_path)?;
 
             // Construct aura_node_lib::config::AuraNodeConfig from aura::config::NodeConfig
             let node_lib_config = aura_node_lib::AuraNodeConfig {
