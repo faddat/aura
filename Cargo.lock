@@ -533,12 +533,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "attohttpc"
+version = "0.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48404d931ab11b3a7a5267291b3b8f3590f09b86181381f8e82a7e562ed832c0"
+dependencies = [
+ "base64 0.22.1",
+ "http 1.3.1",
+ "log",
+ "url",
+]
+
+[[package]]
 name = "aura"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "ark-std",
- "attohttpc",
+ "attohttpc 0.29.2",
  "aura-core",
  "aura-node-lib",
  "aura-wallet-lib",
@@ -2399,7 +2411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76b0d7d4541def58a37bf8efc559683f21edce7c82f0d866c93ac21f7e098f93"
 dependencies = [
  "async-trait",
- "attohttpc",
+ "attohttpc 0.24.1",
  "bytes",
  "futures",
  "http 1.3.1",
